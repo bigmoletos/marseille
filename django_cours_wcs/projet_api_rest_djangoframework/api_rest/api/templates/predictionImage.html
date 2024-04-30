@@ -1,0 +1,74 @@
+<!-- prediction.html -->
+{% extends 'base.html' %}
+{% load static %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-6">
+        <!-- Titre de la page -->
+        <h1>Essayez notre API de reconnaissance d'image !</h1>
+        <br/>
+        <!-- Formulaire pour l'upload d'image -->
+        <!-- 'enctype' est nécessaire pour le téléchargement de fichiers -->
+        <form method="post" enctype="multipart/form-data">
+            {% csrf_token %} <!-- Token CSRF pour la sécurité -->
+            <div class="form-group">
+                <label>Merci d'uploader votre image !</label>
+                <input type="file" name="monImage" required class="form-control" id="imageUpload"> <!-- Champ pour sélectionner l'image à uploader -->
+            </div>
+            <button type="submit" class="btn btn-primary">Valider l'envoi</button> <!-- Bouton pour soumettre l'image -->
+        </form>
+        <!-- Affichage de l'image sélectionnée -->
+        <img id="imagePreview" src="#" alt="Image sélectionnée" ,style="display: none;" width="500" height="500">
+
+
+        <!-- Message de retour après soumission du formulaire -->
+        {% if message %}
+            <div class="alert alert-info">
+                {{ message }}
+            </div>
+        {% endif %}
+    </div>
+    <div class="col-md-6">
+        <!-- Résultats de la prédiction affichés sous forme de liste si présents -->
+        {% if prediction %}
+            <h2>Résultat de la prédiction :</h2>
+            <ul class="list-group">
+                {% for item in prediction %}
+                    <!-- Boucle sur chaque prédiction et affichage du nom et de la probabilité -->
+                    <li class="list-group-item">{{ item.nom }} : {{ item.proba | floatformat:3 }}%</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+        <!-- Affichage de l'image prédite si l'emplacement est défini -->
+        {% if emplacementDeLimage %}
+            <div class="mt-3">
+                <!-- L'attribut 'alt' fournit un texte alternatif pour les images non chargées ou lors de l'utilisation d'un lecteur d'écran -->
+                <img src="{{ emplacementDeLimage }}" alt="Image prédite" class="img-fluid">
+            </div>
+        {% endif %}
+    </div>
+</div>
+<script>
+// Script pour afficher l'image sélectionnée
+document.getElementById('imageUpload').addEventListener('change', function(e) {
+    var reader = new FileReader();
+    reader.onload = function(e) {
+        // Stocke l'image dans le localStorage
+        localStorage.setItem('imagePreview', e.target.result);
+        document.getElementById('imagePreview').src = e.target.result;
+        document.getElementById('imagePreview').style.display = 'block';
+    };
+    reader.readAsDataURL(this.files[0]);
+});
+
+// Script pour afficher l'image du localStorage au chargement de la page
+window.addEventListener('load', function(e) {
+    var imagePreview = localStorage.getItem('imagePreview');
+    if (imagePreview) {
+        document.getElementById('imagePreview').src = imagePreview;
+        document.getElementById('imagePreview').style.display = 'block';
+    }
+});
+</script>
+{% endblock %}
