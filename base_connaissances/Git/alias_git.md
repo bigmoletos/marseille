@@ -1,4 +1,4 @@
-## créer un alias git à mettre de maniére globale dans le fichier .gitconfig
+## créer un alias git à mettre de maniére globale dans le fichier .gitconfig à mettre sous le home "C:\Users\romar\"
 
 git config --global alias.ckt checkout
 git config --global alias.ts status
