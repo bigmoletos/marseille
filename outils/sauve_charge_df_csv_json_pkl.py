@@ -11,10 +11,10 @@ import pickle
 logger = logging.getLogger('colorlog_example')
 
 # Configuration du logging
-path_datasets = "Projet_Meteo/Datasets/meteo_france/upload_dataset_depuis_api/".replace('\\', '/')
+# path_datasets = "Projet_Meteo/Datasets/meteo_france/upload_dataset_depuis_api/".replace('\\', '/')
 # path_fichier_logs="projet_meteo\\Projet_Meteo\\log\\fichier.log"
 params = {
-    "path_datasets": path_datasets,
+    # "path_datasets": path_datasets,
     # "path_fichier_logs":path_fichier_logs,
     "niveau_log": 'DEBUG',  # 'DEBUG' 'INFO' 'WARNING' 'ERROR'  'CRITICAL'
 }
@@ -22,8 +22,8 @@ reconfigurer_logging(params)
 
 # Ajout dans le path du dossier pour stocker les datasets uploadés
 nom_element = "data_mobilis/upload_data_depuis_api"
-path_data_mobilis_upload_data_depuis_api = trouver_chemin_element_depuis_workspace(nom_element, est_un_dossier=True)
-logger.debug(f"\n path_data_mobilis_upload_data_depuis_api:\n{path_data_mobilis_upload_data_depuis_api} \n")
+# path_data_mobilis_upload_data_depuis_api = trouver_chemin_element_depuis_workspace(nom_element, est_un_dossier=True)
+# logger.debug(f"\n path_data_mobilis_upload_data_depuis_api:\n{path_data_mobilis_upload_data_depuis_api} \n")
 
 
 #------------------------------------------------------------

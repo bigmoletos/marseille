@@ -1,8 +1,9 @@
 import requests
 from bs4 import BeautifulSoup
+import datetime
 
 
-def scrap_event(url):
+def scrap_event(url: str) -> str:
     """Scrape les données d'un événement à partir d'une URL donnée."""
     response = requests.get(url)
     soup = BeautifulSoup(response.content, 'html.parser')
@@ -40,10 +41,11 @@ def main():
 
     # Liste des sites web à scrapper
     websites = [
-        'https://www.marseille-tourisme.com/', 'https://www.myprovence.fr/', 'https://www.sortiramarseille.fr/', 'https://www.timeout.com/marseille',
-        'https://madeinmarseille.net/agenda/', 'https://www.le-bon-plan.com/', 'https://www.meetup.com/', 'https://www.thefork.fr/'
-    ]
-
+        'https://www.meetup.com/fr-FR/find/?suggested=true&source=EVENTS&keywords=IA', 'https://www.marseille-tourisme.com/', 'https://www.myprovence.fr/',
+        'https://www.sortiramarseille.fr/', 'https://madeinmarseille.net/agenda/', 'https://lafrenchtech-aixmarseille.fr/agendas/','https://lafrenchtech-grandeprovence.fr/lagenda/',
+        'https://www.frenchtechcotedazur.fr/events/', 'https://medinsoft.com/actu/', 'https://medinsoft.com/event-directory/',
+        'https://medinsoft.com/evenements/les-events-medinsoft/','https://lacoque-numerique.fr/'
+    ]'
     # Scrapez les événements de chaque site web
     for website in websites:
         response = requests.get(website)
