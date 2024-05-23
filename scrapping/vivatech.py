@@ -42,6 +42,7 @@ def lire_noms_partenaires(fichier_csv):
             raise FileNotFoundError(f"Le fichier {fichier_csv} n'existe pas.")
 
         df = pd.read_csv(fichier_csv)
+        # pour tester on ne prend que 5 noms
         df = df.iloc[:5]
         logger.debug(f"Colonnes du fichier CSV: {df.columns.tolist()}")
 
@@ -91,7 +92,8 @@ def scraper_partenaires(url):
         description = soup.find('div', class_='partner-description')
 
         logger.debug(f"\nresponse :\n{response} ")
-        logger.debug(f"\nsoup:\n{soup} ")
+        soup.to_csv("soup.csv", index=False, encoding='utf-8')
+        # logger.debug(f"\nsoup:\n{soup} ")
         logger.debug(f"\n nom:\n{nom} ")
         logger.debug(f"\n pays :\n{pays} ")
         logger.debug(f"\n description:\n{description} ")
