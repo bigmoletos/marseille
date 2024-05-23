@@ -92,7 +92,8 @@ def scraper_partenaires(url):
         description = soup.find('div', class_='partner-description')
 
         logger.debug(f"\nresponse :\n{response} ")
-        soup.to_csv("soup.csv", index=False, encoding='utf-8')
+        df_soup = pd.DataFrame(soup)
+        df_soup.to_csv("soup.csv", index=False, encoding='utf-8')
         # logger.debug(f"\nsoup:\n{soup} ")
         logger.debug(f"\n nom:\n{nom} ")
         logger.debug(f"\n pays :\n{pays} ")
