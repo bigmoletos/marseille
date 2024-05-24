@@ -4,6 +4,7 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 import logging
+import unidecode
 
 # Configuration du logger
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -14,6 +15,7 @@ def nettoyer_nom_partenaire(nom):
     """
     Nettoyer le nom du partenaire en suivant les règles spécifiées :
     - Mettre tout en minuscule
+    - Supprimer les accents
     - Supprimer les caractères spéciaux sauf les points
     - Remplacer les points entre deux lettres et les espaces par un tiret
     - Supprimer les points de début et de fin de ligne
@@ -22,11 +24,31 @@ def nettoyer_nom_partenaire(nom):
     :return: Nom nettoyé
     """
     nom = nom.lower()  # Mettre tout en minuscule
+    nom = unidecode.unidecode(nom)  # Supprimer les accents
     nom = re.sub(r'[^a-z0-9. ]', '', nom)  # Supprimer les caractères spéciaux sauf les points
     nom = re.sub(r'(?<=[a-z])\.(?=[a-z])', '-', nom)  # Remplacer les points entre deux lettres par un tiret
     nom = nom.replace(' ', '-')  # Remplacer les espaces par un tiret
     nom = nom.strip('.')  # Supprimer les points de début et de fin de ligne
     return nom
+
+
+# def nettoyer_nom_partenaire(nom):
+#     """
+#     Nettoyer le nom du partenaire en suivant les règles spécifiées :
+#     - Mettre tout en minuscule
+#     - Supprimer les caractères spéciaux sauf les points
+#     - Remplacer les points entre deux lettres et les espaces par un tiret
+#     - Supprimer les points de début et de fin de ligne
+
+#     :param nom: Nom du partenaire
+#     :return: Nom nettoyé
+#     """
+#     nom = nom.lower()  # Mettre tout en minuscule
+#     nom = re.sub(r'[^a-z0-9. ]', '', nom)  # Supprimer les caractères spéciaux sauf les points
+#     nom = re.sub(r'(?<=[a-z])\.(?=[a-z])', '-', nom)  # Remplacer les points entre deux lettres par un tiret
+#     nom = nom.replace(' ', '-')  # Remplacer les espaces par un tiret
+#     nom = nom.strip('.')  # Supprimer les points de début et de fin de ligne
+#     return nom
 
 
 def lire_noms_partenaires(fichier_csv):
@@ -43,7 +65,8 @@ def lire_noms_partenaires(fichier_csv):
 
         df = pd.read_csv(fichier_csv)
         # pour tester on ne prend que 5 noms
-        df = df.iloc[:5]
+        # df = df.iloc[:5]
+        # df = df.iloc[:2]
         logger.debug(f"Colonnes du fichier CSV: {df.columns.tolist()}")
 
         noms_partenaires = df[df.columns[0]].apply(nettoyer_nom_partenaire).tolist()
@@ -82,16 +105,18 @@ def scraper_partenaires(url):
         response = requests.get(url)
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
-
+        fichier_soup = []
         # nom = soup.find('h1', class_='partner-title')
         # pays = soup.find('div', class_='partner-country')
         # description = soup.find('div', class_='partner-description')
 
         nom = soup.find('h1', class_='font-bold text-lg xl:text-xl text-purple')
         pays = soup.find('div', class_='mt-2 text-sm xl:text-md uppercase')
-        description = soup.find('div', class_='partner-description')
+        description = soup.find('div', class_='my-4 md:my-8 text-sm md:text-[16px] text-purple')
 
         logger.debug(f"\nresponse :\n{response} ")
+        fichier_soup.append(soup)
+        # df_soup = pd.DataFrame(fichier_soup)
         df_soup = pd.DataFrame(soup)
         df_soup.to_csv("soup.csv", index=False, encoding='utf-8')
         # logger.debug(f"\nsoup:\n{soup} ")
@@ -123,12 +148,16 @@ def main(fichier_csv, fichier_sortie):
 
         for nom in noms_partenaires:
             url = construire_url_partenaire(nom)
+            logger.debug(f"\n url:\n{url} ")
+            logger.debug(f"\n nom:\n{nom} ")
             donnees_partenaire = scraper_partenaires(url)
+            logger.debug(f"\n donnees_partenaire:\n{donnees_partenaire} ")
+
             if donnees_partenaire:
                 donnees_partenaires.append(donnees_partenaire)
 
         df_resultats = pd.DataFrame(donnees_partenaires)
-        df_resultats.to_csv(fichier_sortie, index=False, encoding='utf-8')
+        df_resultats.to_csv(fichier_sortie, index=False, sep=";", encoding='utf-8')
         logger.info(f"Données des partenaires sauvegardées dans {fichier_sortie}")
 
     except Exception as e:
@@ -140,4 +169,5 @@ if __name__ == '__main__':
     fichier_csv = 'vivatech_partner_name.csv'
     fichier_sortie = 'partners.csv'
     logger.debug(f"\n fichier_csv :\n{fichier_csv} \n")
+
     main(fichier_csv, fichier_sortie)
