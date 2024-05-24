@@ -30,10 +30,19 @@ def nettoyer_nom_partenaire(nom):
     nom = re.sub(r'(?<=[a-z])\.(?=[a-z])', '-', nom)  # Remplacer les points entre deux lettres par un tiret
     nom = nom.replace(' ', '-')  # Remplacer les espaces par un tiret
     nom = nom.strip('.')  # Supprimer les points de début et de fin de ligne
-    return nom
+
+    # enregistrement du fichier des partenaires avec noms corrigés
+    fichier_partners_corrected = []
+    df_fichier_partners_corrected = []
+    fichier_partners_corrected.append(nom)
+    # df_fichier_partners_corrected = pd.DataFrame(noms_partenaires)
+    df_fichier_partners_corrected = pd.DataFrame(fichier_partners_corrected)
+    df_fichier_partners_corrected.to_csv("fichier_partners_corrected.csv", index=False, encoding='utf-8')
+
+    return nom, df_fichier_partners_corrected
 
 
-def lire_noms_partenaires(fichier_csv):
+def lire_noms_partenaires(fichier_csv, fichier_csv_initial):
     """
     Lire les noms des partenaires à partir d'un fichier CSV et les nettoyer.
 
@@ -45,20 +54,20 @@ def lire_noms_partenaires(fichier_csv):
             logger.error(f"Le fichier {fichier_csv} n'existe pas.")
             raise FileNotFoundError(f"Le fichier {fichier_csv} n'existe pas.")
 
+        df_initial = pd.read_csv(fichier_csv_initial)
         df = pd.read_csv(fichier_csv)
-        if df.empty:
-            logger.error(f"Le fichier {fichier_csv} est vide.")
-            raise ValueError(f"Le fichier {fichier_csv} est vide.")
 
+        # pour tester on ne prend que 5 noms
+        # df = df.iloc[:5]
+        # df = df.iloc[:2]
         logger.debug(f"Colonnes du fichier CSV: {df.columns.tolist()}")
 
-        if 'name' not in df.columns:
-            logger.error(f"La colonne 'name' est manquante dans le fichier {fichier_csv}.")
-            raise KeyError(f"La colonne 'name' est manquante dans le fichier {fichier_csv}.")
+        noms_partenaires = df[df.columns[0]].apply(nettoyer_nom_partenaire).tolist()
+        noms_partenaires_depuis_fichier_corrigé = df_initial[df_initial.columns[0]].tolist()
 
-        noms_partenaires = df['name'].apply(nettoyer_nom_partenaire).tolist()
         logger.debug(f"Noms des partenaires lus: {noms_partenaires}")
-        return noms_partenaires
+
+        return noms_partenaires, noms_partenaires_depuis_fichier_corrigé
     except Exception as e:
         logger.error(f"Erreur lors de la lecture du fichier CSV: {e}")
         raise
@@ -79,6 +88,9 @@ def construire_url_partenaire(nom, url_base="https://vivatechnology.com/partners
     except Exception as e:
         logger.error(f"Erreur lors de la construction de l'URL pour {nom}: {e}")
         raise
+
+
+#
 
 
 def scraper_partenaires(url):
@@ -123,36 +135,20 @@ def main(fichier_csv, fichier_sortie, fichier_csv_initial):
     """
     Fonction principale pour orchestrer le scraping et l'enregistrement des données.
 
-    :param fichier_csv: Chemin vers le fichier CSV contenant les noms des partenaires nettoyés
+    :param fichier_csv: Chemin vers le fichier CSV contenant les noms des partenaires
     :param fichier_sortie: Chemin vers le fichier CSV de sortie pour enregistrer les données
-    :param fichier_csv_initial: Chemin vers le fichier CSV initial contenant les noms bruts des partenaires
     """
     try:
-        # Vérifier si le fichier "fichier_partners_corrected.csv" existe et comporte plus de 1000 lignes
-        if os.path.exists(fichier_csv):
-            df_corrected = pd.read_csv(fichier_csv)
-            if df_corrected.empty:
-                logger.error(f"Le fichier {fichier_csv} est vide.")
-                raise ValueError(f"Le fichier {fichier_csv} est vide.")
-            if len(df_corrected) > 1000:
-                logger.info(f"Le fichier {fichier_csv} existe et comporte plus de 1000 lignes. Utilisation directe pour le scraping.")
-                noms_partenaires = df_corrected.iloc[:, 0].tolist()
-            else:
-                logger.info(f"Le fichier {fichier_csv} existe mais comporte moins de 1000 lignes. Retraitement des noms des partenaires.")
-                noms_partenaires = lire_noms_partenaires(fichier_csv_initial)
-                df_corrected = pd.DataFrame(noms_partenaires, columns=['name'])
-                df_corrected.to_csv(fichier_csv, index=False, encoding='utf-8')
-                logger.info(f"Noms des partenaires nettoyés enregistrés dans {fichier_csv}")
-        else:
-            logger.info(f"Le fichier {fichier_csv} n'existe pas. Traitement des noms des partenaires.")
-            noms_partenaires = lire_noms_partenaires(fichier_csv_initial)
-            df_corrected = pd.DataFrame(noms_partenaires, columns=['name'])
-            df_corrected.to_csv(fichier_csv, index=False, encoding='utf-8')
-            logger.info(f"Noms des partenaires nettoyés enregistrés dans {fichier_csv}")
+        # " utilisation du fichier non traité"
+        # noms_partenaires = lire_noms_partenaires(fichier_csv_initial)
 
+        # " utilisation du fichier déja traité"
+        noms_partenaires, noms_partenaires_depuis_fichier_corrigé = lire_noms_partenaires(fichier_csv, fichier_csv_initial)
         donnees_partenaires = []
 
-        for nom in noms_partenaires:
+        # for nom in noms_partenaires:
+        for nom in noms_partenaires_depuis_fichier_corrigé:
+
             url = construire_url_partenaire(nom)
             logger.debug(f"\n url:\n{url} ")
             logger.debug(f"\n nom:\n{nom} ")
@@ -173,9 +169,9 @@ def main(fichier_csv, fichier_sortie, fichier_csv_initial):
 
 
 if __name__ == '__main__':
-    liste_noms_partner_initial = 'vivatech_partner_name.csv'
-    liste_noms_partner_corrected = 'fichier_partners_corrected.csv'
+    fichier_csv_initial = 'vivatech_partner_name.csv'
+    fichier_csv = 'fichier_partners_corrected.csv'
     fichier_sortie = 'partners.csv'
-    logger.debug(f"\n liste_noms_partner_corrected :\n{liste_noms_partner_corrected} \n")
+    logger.debug(f"\n fichier_csv :\n{fichier_csv} \n")
 
-    main(liste_noms_partner_corrected, fichier_sortie, liste_noms_partner_initial)
+    main(fichier_csv, fichier_sortie, fichier_csv_initial)
