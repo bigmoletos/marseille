@@ -897,24 +897,38 @@ class DossierSync:
                         mode = st.session_state.get('mode', 'Non défini')
                         if mode == "Bidirectionnel (miroir)":
                             if st.session_state.files_to_create:
-                                st.info(f"- {len(st.session_state.files_to_create)} fichiers seront copiés de '{self.dossier_a}' vers '{self.dossier_b}'")
+                                st.info(
+                                    f"• {len(st.session_state.files_to_create)} fichiers seront copiés de '{self.dossier_a}' vers '{self.dossier_b}'"
+                                )
                             if st.session_state.get('files_to_create_reverse'):
-                                st.info(f"- {len(st.session_state.get('files_to_create_reverse'))} fichiers seront copiés de '{self.dossier_b}' vers '{self.dossier_a}'")
+                                st.info(
+                                    f"• {len(st.session_state.get('files_to_create_reverse'))} fichiers seront copiés de '{self.dossier_b}' vers '{self.dossier_a}'"
+                                )
                             if st.session_state.files_to_update:
-                                st.warning(f"- {len(st.session_state.files_to_update)} fichiers seront mis à jour entre les deux dossiers")
+                                st.warning(
+                                    f"• {len(st.session_state.files_to_update)} fichiers seront mis à jour entre les deux dossiers"
+                                )
                         else:
                             source = self.dossier_a if mode == "A vers B (sauvegarde)" else self.dossier_b
                             dest = self.dossier_b if mode == "A vers B (sauvegarde)" else self.dossier_a
                             if st.session_state.files_to_create:
-                                st.info(f"- {len(st.session_state.files_to_create)} fichiers seront copiés de '{source}' vers '{dest}'")
+                                st.info(
+                                    f"• {len(st.session_state.files_to_create)} fichiers seront copiés de '{source}' vers '{dest}'"
+                                )
                             if st.session_state.files_to_update:
-                                st.warning(f"- {len(st.session_state.files_to_update)} fichiers seront mis à jour de '{source}' vers '{dest}'")
+                                st.warning(
+                                    f"• {len(st.session_state.files_to_update)} fichiers seront mis à jour de '{source}' vers '{dest}'"
+                                )
                             if st.session_state.files_to_delete:
-                                st.error(f"- {len(st.session_state.files_to_delete)} fichiers seront supprimés dans '{dest}'")
+                                st.error(
+                                    f"• {len(st.session_state.files_to_delete)} fichiers seront supprimés dans '{dest}'"
+                                )
 
                         # Boutons de confirmation
                         col1, col2 = st.columns(2)
-                        if col1.button("✅ Confirmer la synchronisation", type="primary", key="confirm_sync"):
+
+                        if col1.button("✅ Confirmer la synchronisation",
+                                       key="confirm_sync"):
                             try:
                                 with st.spinner("Synchronisation en cours..."):
                                     self.synchronize()
