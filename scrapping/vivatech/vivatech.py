@@ -8,7 +8,7 @@ import unidecode
 import time
 
 # Configuration du logger
-logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger()
 
 
@@ -88,9 +88,10 @@ def scraper_partenaires(url):
     :param url: URL de la page du partenaire
     :return: Dictionnaire contenant les données du partenaire
     """
+    liste_name_partner_status400 = []
     for i in range(3):  # Essayer jusqu'à 3 fois
         try:
-            response = requests.get(url, timeout=10)  # Timeout de 10 secondes
+            response = requests.get(url, timeout=15)  # Timeout de 10 secondes
             response.raise_for_status()
             soup = BeautifulSoup(response.content, 'html.parser')
 
@@ -112,10 +113,13 @@ def scraper_partenaires(url):
             }
         except requests.RequestException as e:
             logger.error(f"Erreur lors du scraping de l'URL {url}: {e}")
-            time.sleep(2)  # Attendre 2 secondes avant de réessayer
+            time.sleep(3)  # Attendre 2 secondes avant de réessayer
+            liste_name_partner_status400.append(nom)
         except Exception as e:
             logger.error(f"Erreur non liée à la requête lors du scraping de l'URL {url}: {e}")
             return None
+        df_liste_name_partner_status400 = pd.DataFrame(liste_name_partner_status400)
+        df_liste_name_partner_status400.to_csv('liste_name_partner_status400.csv', index=False, encoding='utf-8')
     return None
 
 
@@ -159,12 +163,13 @@ def main(fichier_csv, fichier_sortie, fichier_csv_initial):
 
             donnees_partenaire = scraper_partenaires(url)
             logger.debug(f"\n donnees_partenaire:\n{donnees_partenaire} ")
+            df_resultats = pd.DataFrame(donnees_partenaires)
 
             if donnees_partenaire:
                 donnees_partenaires.append(donnees_partenaire)
 
-        df_resultats = pd.DataFrame(donnees_partenaires)
-        df_resultats.to_csv(fichier_sortie, index=False, sep=";", encoding='utf-8')
+                df_resultats.to_csv(fichier_sortie, index=False, sep=";", encoding='utf-8')
+        # df_resultats.to_csv(fichier_sortie, index=False, sep=";", encoding='utf-8')
         logger.info(f"Données des partenaires sauvegardées dans {fichier_sortie}")
 
     except Exception as e:
@@ -175,6 +180,9 @@ def main(fichier_csv, fichier_sortie, fichier_csv_initial):
 if __name__ == '__main__':
     liste_noms_partner_initial = 'vivatech_partner_name.csv'
     liste_noms_partner_corrected = 'fichier_partners_corrected.csv'
+    # si certains noms ne passent pas on peut reiterer sur la liste des noms qui était en erreur au tour precedent.
+    liste_noms_partner_corrected = 'liste_name_partner_status400.csv'
+    # 43.261629, 5.333580
     fichier_sortie = 'partners.csv'
     logger.debug(f"\n liste_noms_partner_corrected :\n{liste_noms_partner_corrected} \n")
 
