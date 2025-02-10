@@ -484,64 +484,89 @@ class DossierSync:
             files_to_create = st.session_state.files_to_create
             files_to_update = st.session_state.files_to_update
             files_to_delete = st.session_state.files_to_delete
-            files_to_create_reverse = st.session_state.get(
-                'files_to_create_reverse', [])
+            files_to_create_reverse = st.session_state.get('files_to_create_reverse', [])
 
             total_operations = (len(files_to_create) + len(files_to_update) +
-                                len(files_to_delete) +
-                                len(files_to_create_reverse))
+                              len(files_to_delete) + len(files_to_create_reverse))
+
+            if total_operations == 0:
+                logger.info("Aucune opération à effectuer")
+                return
+
             operations_done = 0
 
-            if mode == "Bidirectionnel (miroir)":
-                # Première phase : A vers B
-                logger.info("=== Phase 1: Synchronisation A vers B ===")
-                for file in files_to_create:
-                    source = self.dossier_a / file
-                    dest = self.dossier_b / file
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(source, dest)
-                    operations_done += 1
-                    self._update_progress(operations_done / total_operations)
-                    logger.info(f"Copié de A vers B: {file}")
+            try:
+                if mode == "Bidirectionnel (miroir)":
+                    # Première phase : A vers B
+                    logger.info("=== Phase 1: Synchronisation A vers B ===")
+                    for file in files_to_create:
+                        source = self.dossier_a / file
+                        dest = self.dossier_b / file
+                        self.safe_copy(source, dest)
+                        operations_done += 1
+                        self._update_progress(operations_done / total_operations)
+                        logger.info(f"Copié de A vers B: {file}")
 
-                # Deuxième phase : B vers A
-                logger.info("=== Phase 2: Synchronisation B vers A ===")
-                for file in files_to_create_reverse:
-                    source = self.dossier_b / file
-                    dest = self.dossier_a / file
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(source, dest)
-                    operations_done += 1
-                    self._update_progress(operations_done / total_operations)
-                    logger.info(f"Copié de B vers A: {file}")
+                    # Deuxième phase : B vers A
+                    logger.info("=== Phase 2: Synchronisation B vers A ===")
+                    for file in files_to_create_reverse:
+                        source = self.dossier_b / file
+                        dest = self.dossier_a / file
+                        self.safe_copy(source, dest)
+                        operations_done += 1
+                        self._update_progress(operations_done / total_operations)
+                        logger.info(f"Copié de B vers A: {file}")
 
-                # Mise à jour des fichiers communs
-                logger.info(
-                    "=== Phase 3: Mise à jour des fichiers communs ===")
+                else:  # Modes unidirectionnels
+                    source = self.dossier_a if mode == "A vers B (sauvegarde)" else self.dossier_b
+                    dest = self.dossier_b if mode == "A vers B (sauvegarde)" else self.dossier_a
+
+                    # Copier les nouveaux fichiers
+                    for file in files_to_create:
+                        source_file = source / file
+                        dest_file = dest / file
+                        self.safe_copy(source_file, dest_file)
+                        operations_done += 1
+                        self._update_progress(operations_done / total_operations)
+                        logger.info(f"Copié: {file}")
+
+                    # Supprimer les fichiers
+                    for file in files_to_delete:
+                        file_to_delete = dest / file
+                        self.safe_delete(file_to_delete)
+                        operations_done += 1
+                        self._update_progress(operations_done / total_operations)
+                        logger.info(f"Supprimé: {file}")
+
+                # Mise à jour des fichiers communs (pour tous les modes)
+                logger.info("=== Mise à jour des fichiers ===")
                 for file in files_to_update:
-                    file_a = self.dossier_a / file
-                    file_b = self.dossier_b / file
-                    if file_a.stat().st_mtime > file_b.stat().st_mtime:
-                        shutil.copy2(file_a, file_b)
-                        logger.info(f"Mis à jour (A → B): {file}")
+                    if mode == "Bidirectionnel (miroir)":
+                        file_a = self.dossier_a / file
+                        file_b = self.dossier_b / file
+                        if file_a.stat().st_mtime > file_b.stat().st_mtime:
+                            self.safe_copy(file_a, file_b)
+                            logger.info(f"Mis à jour (A → B): {file}")
+                        else:
+                            self.safe_copy(file_b, file_a)
+                            logger.info(f"Mis à jour (B → A): {file}")
                     else:
-                        shutil.copy2(file_b, file_a)
-                        logger.info(f"Mis à jour (B → A): {file}")
+                        source_file = source / file
+                        dest_file = dest / file
+                        self.safe_copy(source_file, dest_file)
+                        logger.info(f"Mis à jour: {file}")
                     operations_done += 1
                     self._update_progress(operations_done / total_operations)
-
-            else:
-                # Mode unidirectionnel (A vers B ou B vers A)
-                # ... (code existant pour les modes unidirectionnels)
 
                 logger.info("Synchronisation terminée avec succès")
                 st.session_state.sync_done = True
-                st.success("✅ Synchronisation terminée avec succès!")
-                st.rerun()
+
+            except Exception as e:
+                logger.error(f"Erreur pendant la synchronisation: {e}")
+                raise
 
         except Exception as e:
             logger.error(f"Erreur lors de la synchronisation: {e}")
-            st.error(f"Erreur lors de la synchronisation: {str(e)}")
             raise
 
     def show_ui(self):
@@ -749,7 +774,7 @@ class DossierSync:
                         # Options pour les fichiers à créer
                         if st.session_state.comparison_results.get(
                                 'to_create'):
-                            st.write("#### 📝 Fichiers à créer")
+                            st.write("#### Fichiers à créer")
                             create_cols = st.columns([2, 1, 1, 1])
                             create_cols[0].write(
                                 f"**{len(st.session_state.comparison_results['to_create'])} fichiers**"
@@ -879,130 +904,34 @@ class DossierSync:
                                 """)
 
                 # Bouton de synchronisation
-                if st.button("🚀 Lancer la synchronisation",
-                             type="primary",
-                             key="launch_sync"):
-                    # Vérifier s'il y a des modifications à effectuer
-                    mode = st.session_state.get('mode', 'Non défini')
+                if st.button("🚀 Lancer la synchronisation", type="primary", key="launch_sync"):
+                    logger.debug("Bouton de synchronisation cliqué")
 
-                    if mode == "Bidirectionnel (miroir)":
-                        has_changes = (
-                            len(st.session_state.
-                                comparison_results['to_create']) > 0
-                            or len(st.session_state.
-                                   comparison_results['to_create_reverse']) > 0
-                            or len(st.session_state.
-                                   comparison_results['to_update']) > 0)
-                    else:
-                        has_changes = (len(
-                            st.session_state.comparison_results['to_create']
-                        ) > 0 or len(
-                            st.session_state.comparison_results['to_update']
-                        ) > 0 or len(
-                            st.session_state.comparison_results['to_delete'])
-                                       > 0)
+                    try:
+                        with st.spinner("Synchronisation en cours..."):
+                            logger.debug("Début de la synchronisation")
+                            # Mettre à jour les listes de fichiers à traiter depuis comparison_results
+                            st.session_state.files_to_create = st.session_state.comparison_results.get('to_create', [])
+                            st.session_state.files_to_update = st.session_state.comparison_results.get('to_update', [])
 
-                    if not has_changes:
-                        st.warning("Aucune modification à effectuer.")
-                    else:
-                        # Afficher le résumé des modifications à effectuer
-                        st.write("### ⚠️ Confirmation de synchronisation")
+                            if st.session_state.mode == "Bidirectionnel (miroir)":
+                                st.session_state.files_to_create_reverse = st.session_state.comparison_results.get('to_create_reverse', [])
+                                st.session_state.files_to_delete = []
+                            else:
+                                st.session_state.files_to_delete = st.session_state.comparison_results.get('to_delete', [])
 
-                        if mode == "Bidirectionnel (miroir)":
-                            files_to_create = st.session_state.comparison_results[
-                                'to_create']
-                            files_to_create_reverse = st.session_state.comparison_results[
-                                'to_create_reverse']
-                            files_to_update = st.session_state.comparison_results[
-                                'to_update']
+                            # Lancer la synchronisation
+                            self.synchronize()
+                            logger.debug("Synchronisation terminée")
 
-                            if files_to_create:
-                                st.info(
-                                    f"• {len(files_to_create)} fichiers seront copiés de '{self.dossier_a}' vers '{self.dossier_b}':"
-                                )
-                                for f in sorted(files_to_create):
-                                    st.text(f"  ➡️ {f}")
+                        st.success("✅ Synchronisation terminée avec succès!")
+                        # Mettre à jour la comparaison
+                        st.session_state.comparison_results = self.compare_folders()
+                        st.rerun()
 
-                            if files_to_create_reverse:
-                                st.info(
-                                    f"• {len(files_to_create_reverse)} fichiers seront copiés de '{self.dossier_b}' vers '{self.dossier_a}':"
-                                )
-                                for f in sorted(files_to_create_reverse):
-                                    st.text(f"  ⬅️ {f}")
-
-                            if files_to_update:
-                                st.warning(
-                                    f"• {len(files_to_update)} fichiers seront mis à jour:"
-                                )
-                                for f in sorted(files_to_update):
-                                    st.text(f"  🔄 {f}")
-                        else:
-                            source = self.dossier_a if mode == "A vers B (sauvegarde)" else self.dossier_b
-                            dest = self.dossier_b if mode == "A vers B (sauvegarde)" else self.dossier_a
-
-                            files_to_create = st.session_state.comparison_results[
-                                'to_create']
-                            files_to_update = st.session_state.comparison_results[
-                                'to_update']
-                            files_to_delete = st.session_state.comparison_results[
-                                'to_delete']
-
-                            if files_to_create:
-                                st.info(
-                                    f"• {len(files_to_create)} fichiers seront copiés de '{source}' vers '{dest}':"
-                                )
-                                for f in sorted(files_to_create):
-                                    st.text(f"  ➡️ {f}")
-
-                            if files_to_update:
-                                st.warning(
-                                    f"• {len(files_to_update)} fichiers seront mis à jour de '{source}' vers '{dest}':"
-                                )
-                                for f in sorted(files_to_update):
-                                    st.text(f"  🔄 {f}")
-
-                            if files_to_delete:
-                                st.error(
-                                    f"• {len(files_to_delete)} fichiers seront supprimés dans '{dest}':"
-                                )
-                                for f in sorted(files_to_delete):
-                                    st.text(f"  🗑️ {f}")
-
-                        # Boutons de confirmation
-                        col1, col2 = st.columns(2)
-
-                        if col1.button("✅ Confirmer",
-                                       type="primary",
-                                       key="confirm_sync"):
-                            try:
-                                with st.spinner("Synchronisation en cours..."):
-                                    # Mettre à jour les listes de fichiers à traiter
-                                    st.session_state.files_to_create = files_to_create
-                                    st.session_state.files_to_update = files_to_update
-                                    if mode == "Bidirectionnel (miroir)":
-                                        st.session_state.files_to_create_reverse = files_to_create_reverse
-                                        st.session_state.files_to_delete = []
-                                    else:
-                                        st.session_state.files_to_delete = files_to_delete
-
-                                    # Lancer la synchronisation
-                                    self.synchronize()
-
-                                st.success(
-                                    "✅ Synchronisation terminée avec succès!")
-                                # Mettre à jour la comparaison
-                                st.session_state.comparison_results = self.compare_folders(
-                                )
-                                st.rerun()
-
-                            except Exception as e:
-                                st.error(f"❌ Erreur lors de la synchronisation: {str(e)}")
-                                logger.error(f"Erreur lors de la synchronisation: {e}")
-                                logger.exception("Détails de l'erreur:")
-
-                        if col2.button("❌ Annuler", key="cancel_sync"):
-                            st.info("Synchronisation annulée")
-                            st.rerun()
+                    except Exception as e:
+                        logger.error(f"Erreur lors de la synchronisation: {e}", exc_info=True)
+                        st.error(f"❌ Erreur lors de la synchronisation: {str(e)}")
 
             # Boutons de contrôle en bas
             st.markdown("<div class='control-buttons'>",
