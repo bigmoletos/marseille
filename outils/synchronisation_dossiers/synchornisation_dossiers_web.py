@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from tkinter import filedialog
 import tkinter as tk
 import threading
+import fnmatch
 
 # Configuration de la page Streamlit
 st.set_page_config(
@@ -64,13 +65,15 @@ logger = logging.getLogger(__name__)
 
 
 def select_folder() -> Optional[str]:
-    """Ouvre une fenêtre de sélection de dossier"""
+    """Ouvre une fenêtre de sélection de dossier."""
     root = tk.Tk()
     root.withdraw()  # Cache la fenêtre principale Tk
-    root.wm_attributes('-topmost', 1)  # Met la fenêtre au premier plan
     folder = filedialog.askdirectory()
     root.destroy()
-    return folder if folder else None
+    if not folder:
+        return None
+    # S'assurer que le chemin est absolu et normalisé
+    return str(Path(folder).resolve())
 
 
 # Initialisation de l'état de session si nécessaire
@@ -245,222 +248,144 @@ class DossierSync:
 
     def __init__(self, dossier_a: Union[str, Path], dossier_b: Union[str,
                                                                      Path]):
-        self.dossier_a = Path(dossier_a)
-        self.dossier_b = Path(dossier_b)
+        # Conversion en chemins absolus et normalisés
+        self.dossier_a = Path(dossier_a).resolve()
+        self.dossier_b = Path(dossier_b).resolve()
+        logger.info(f"Initialisation avec dossier A: {self.dossier_a}")
+        logger.info(f"Initialisation avec dossier B: {self.dossier_b}")
         self.ignored_patterns: Set[str] = self._load_ignore_patterns()
         self.stats = SyncStats()
         self.progress_callback: Optional[Callable] = None
         self.cancelled = False
 
     def _load_ignore_patterns(self) -> Set[str]:
-        """Charge les patterns à ignorer depuis .fileignore"""
+        """Charge les patterns à ignorer."""
         try:
-            ignore_file = Path(__file__).parent / '.fileignore'
-            if not ignore_file.exists():
-                return set()
-            with open(ignore_file, 'r', encoding='utf-8') as f:
-                return {
-                    line.strip()
-                    for line in f if line.strip() and not line.startswith('#')
-                }
+            # Utiliser un ensemble de patterns par défaut au lieu du fichier .fileignore
+            return {
+                '__pycache__', '.git', '.vscode', '.idea', '.pytest_cache',
+                '*.pyc', '*.pyo', '*.pyd', '.DS_Store', 'Thumbs.db'
+            }
         except Exception as e:
             logger.error(
                 f"Erreur lors du chargement des patterns à ignorer: {e}")
             return set()
 
     def _should_ignore(self, path: Path) -> bool:
-        """Vérifie si un chemin doit être ignoré"""
-        # Vérifier le nom du fichier et tous les dossiers parents
-        parts = path.parts
-        for part in parts:
-            if any(pattern in part for pattern in self.ignored_patterns):
-                return True
-            # Ignorer explicitement les dossiers .git
-            if '.git' in part:
-                return True
-        return False
-
-    def _get_relative_files(self, base_path: Path) -> Set[str]:
-        """Obtient la liste des fichiers et dossiers relatifs"""
-        logger.info(f"Lecture des fichiers du dossier: {base_path}")
-        items = set()
+        """
+        Détermine si un fichier ou dossier doit être ignoré.
+        """
         try:
-            for root, dirs, filenames in os.walk(base_path):
-                logger.debug(f"Analyse du dossier: {root}")
-                # Chemin relatif du dossier courant
-                rel_root = os.path.relpath(root, base_path)
-                logger.debug(f"Chemin relatif: {rel_root}")
+            # Vérifier chaque partie du chemin
+            path_str = str(path)
+            logger.debug(f"Vérification du chemin: {path_str}")
 
-                # Ajouter les dossiers
-                for dir_name in dirs:
-                    if not self._should_ignore(Path(dir_name)):
-                        dir_path = os.path.join(rel_root, dir_name)
-                        if rel_root == ".":
-                            dir_path = dir_name
-                        items.add(dir_path + "/")
-                        logger.debug(f"Dossier ajouté: {dir_path}/")
-                    else:
-                        logger.debug(f"Dossier ignoré: {dir_name}")
+            # Vérifier les patterns à ignorer
+            for pattern in self.ignored_patterns:
+                if '*' in pattern:
+                    if fnmatch.fnmatch(path_str, pattern):
+                        logger.debug(
+                            f"Fichier ignoré (pattern {pattern}): {path}")
+                        return True
+                elif pattern in path_str:
+                    logger.debug(f"Fichier ignoré (pattern {pattern}): {path}")
+                    return True
 
-                # Ajouter les fichiers
-                for filename in filenames:
-                    file_path = Path(os.path.join(rel_root, filename))
-                    if not self._should_ignore(file_path):
-                        rel_path = str(file_path).replace("\\", "/")
-                        if rel_root == ".":
-                            rel_path = filename
-                        items.add(rel_path)
-                        logger.debug(f"Fichier ajouté: {rel_path}")
-                    else:
-                        logger.debug(f"Fichier ignoré: {filename}")
-
-            logger.info(
-                f"Total éléments trouvés dans {base_path}: {len(items)}")
-            return items
+            logger.debug(f"Fichier accepté: {path}")
+            return False
 
         except Exception as e:
             logger.error(
-                f"Erreur lors de la lecture des fichiers dans {base_path}: {e}"
-            )
-            logger.exception("Détails de l'erreur:")
+                f"Erreur lors de la vérification d'ignore pour {path}: {e}")
+            return False
+
+    def _scan_folder(self, folder: Path) -> Set[str]:
+        """Scanne un dossier et retourne les fichiers non ignorés."""
+        files = set()
+        logger.info(f"=== SCAN {folder.absolute()} ===")
+        try:
+            for file_path in folder.rglob('*'):
+                if file_path.is_file() and not self._should_ignore(file_path):
+                    rel_path = str(file_path.relative_to(folder))
+                    files.add(rel_path)
+                    logger.debug(
+                        f"Fichier trouvé dans {folder.name}: {rel_path}")
+                else:
+                    logger.debug(
+                        f"Fichier ignoré dans {folder.name}: {file_path}")
+        except Exception as e:
+            logger.error(f"Erreur lors du scan du dossier {folder}: {e}")
             raise
+
+        logger.info(f"Total fichiers dans {folder.absolute()}: {len(files)}")
+        return files
 
     def compare_folders(self) -> Dict[str, List[str]]:
         """Compare les dossiers selon le mode sélectionné."""
         try:
             logger.info("=== DÉBUT COMPARAISON ===")
-
-            # Vérification des dossiers
-            if not self.dossier_a or not self.dossier_b:
-                logger.error(
-                    f"Dossiers non spécifiés - A: {self.dossier_a}, B: {self.dossier_b}"
-                )
-                raise ValueError(
-                    "Les dossiers source et destination doivent être spécifiés"
-                )
-
-            dossier_a = Path(self.dossier_a)
-            dossier_b = Path(self.dossier_b)
-
-            if not dossier_a.exists() or not dossier_b.exists():
-                logger.error(
-                    f"Dossiers inexistants - A: {dossier_a}, B: {dossier_b}")
-                raise ValueError(
-                    "Les dossiers source et destination doivent exister")
-
-            logger.info(f"Mode de synchronisation: {st.session_state.mode}")
-            logger.info(f"Dossier A: {dossier_a}")
-            logger.info(f"Dossier B: {dossier_b}")
-
-            # Récupération des fichiers (avec chemins relatifs)
-            files_a = set()
-            files_b = set()
-
-            # Parcours dossier A
-            for file_path in dossier_a.rglob('*'):
-                if file_path.is_file() and not self._should_ignore(file_path):
-                    try:
-                        rel_path = str(
-                            file_path.relative_to(dossier_a)).replace(
-                                '\\', '/')
-                        files_a.add(rel_path)
-                        logger.debug(f"Fichier trouvé dans A: {rel_path}")
-                    except Exception as e:
-                        logger.error(
-                            f"Erreur lors du traitement du fichier {file_path}: {e}"
-                        )
-
-            # Parcours dossier B
-            for file_path in dossier_b.rglob('*'):
-                if file_path.is_file() and not self._should_ignore(file_path):
-                    try:
-                        rel_path = str(
-                            file_path.relative_to(dossier_b)).replace(
-                                '\\', '/')
-                        files_b.add(rel_path)
-                        logger.debug(f"Fichier trouvé dans B: {rel_path}")
-                    except Exception as e:
-                        logger.error(
-                            f"Erreur lors du traitement du fichier {file_path}: {e}"
-                        )
-
+            mode = st.session_state.get('mode', 'Non défini')
+            logger.info(f"Mode: {mode}")
+            logger.info(f"Dossier source (A): {self.dossier_a.absolute()}")
             logger.info(
-                f"Fichiers trouvés - A: {len(files_a)}, B: {len(files_b)}")
+                f"Dossier destination (B): {self.dossier_b.absolute()}")
 
-            # Inversion des ensembles si mode restauration
-            if st.session_state.mode == "B vers A (restauration)":
-                logger.info(
-                    "Mode restauration: inversion des ensembles A et B")
-                files_a, files_b = files_b, files_a
+            files_a = self._scan_folder(self.dossier_a)
+            files_b = self._scan_folder(self.dossier_b)
 
-            # Calcul des différences
-            to_create = files_a - files_b
-            to_delete = files_b - files_a
-            common = files_a & files_b
+            # Calcul des différences selon le mode
+            if mode == "A vers B (sauvegarde)":
+                to_create = files_a - files_b  # Fichiers à copier de A vers B
+                to_delete = files_b - files_a  # Fichiers à supprimer dans B
+                to_create_reverse = []
+                common = files_a & files_b
 
-            logger.info(f"Fichiers à créer: {len(to_create)}")
-            logger.info(f"Fichiers à supprimer: {len(to_delete)}")
-            logger.info(f"Fichiers communs: {len(common)}")
+            elif mode == "B vers A (restauration)":
+                to_create = files_b - files_a  # Fichiers à copier de B vers A
+                to_delete = files_a - files_b  # Fichiers à supprimer dans A
+                to_create_reverse = []
+                common = files_a & files_b
 
-            # Vérification des fichiers communs
+            else:  # Mode bidirectionnel (miroir)
+                to_create = files_a - files_b  # Fichiers à copier de A vers B
+                to_create_reverse = files_b - files_a  # Fichiers à copier de B vers A
+                to_delete = set()  # Pas de suppression en mode bidirectionnel
+                common = files_a & files_b
+
+            # Vérification des fichiers communs pour mise à jour
             to_update = []
             for file in sorted(common):
                 try:
-                    file_a = dossier_a / file
-                    file_b = dossier_b / file
+                    file_a = self.dossier_a / file
+                    file_b = self.dossier_b / file
 
-                    # Comparaison des tailles
-                    size_a = file_a.stat().st_size
-                    size_b = file_b.stat().st_size
+                    stats_a = file_a.stat()
+                    stats_b = file_b.stat()
 
-                    if size_a != size_b:
-                        logger.debug(
-                            f"Tailles différentes pour {file} - A: {size_a}, B: {size_b}"
-                        )
+                    if stats_a.st_size != stats_b.st_size or stats_a.st_mtime != stats_b.st_mtime:
                         to_update.append(file)
                         continue
-
-                    # Comparaison du contenu si tailles identiques
-                    if not filecmp.cmp(str(file_a), str(file_b),
-                                       shallow=False):
-                        logger.debug(f"Contenus différents pour {file}")
-                        to_update.append(file)
 
                 except Exception as e:
                     logger.error(
                         f"Erreur lors de la comparaison de {file}: {e}")
                     continue
 
-            # Préparation du résultat
             result = {
                 'to_create':
                 sorted(list(to_create)),
                 'to_update':
                 sorted(to_update),
                 'to_delete':
-                sorted(list(to_delete))
-                if st.session_state.mode != "Bidirectionnel (miroir)" else [],
+                sorted(list(to_delete)) if to_delete else [],
                 'to_create_reverse':
-                sorted(list(to_delete))
-                if st.session_state.mode == "Bidirectionnel (miroir)" else []
+                sorted(list(to_create_reverse)) if to_create_reverse else []
             }
-
-            # Log des résultats
-            logger.info("=== RÉSULTATS DE LA COMPARAISON ===")
-            logger.info(f"Fichiers à créer: {len(result['to_create'])}")
-            logger.info(
-                f"Fichiers à mettre à jour: {len(result['to_update'])}")
-            logger.info(f"Fichiers à supprimer: {len(result['to_delete'])}")
-            if result['to_create_reverse']:
-                logger.info(
-                    f"Fichiers à créer en sens inverse: {len(result['to_create_reverse'])}"
-                )
 
             return result
 
         except Exception as e:
             logger.error(f"Erreur lors de la comparaison: {e}")
-            logger.exception("Détails de l'erreur:")
             raise
 
     def safe_delete(self, path: Path) -> bool:
@@ -520,21 +445,10 @@ class DossierSync:
         self.stats.cancelled = True
         logger.info("Annulation de la synchronisation demandée")
 
-    def _update_progress(self):
-        """Met à jour la progression et les estimations"""
+    def _update_progress(self, progress: float):
+        """Met à jour la barre de progression."""
         if self.progress_callback:
-            self.progress_callback({
-                'progress':
-                self.stats.get_progress_percentage() / 100,
-                'current':
-                self.stats.current_operation,
-                'total':
-                self.stats.total_operations,
-                'elapsed':
-                self.stats.get_elapsed_time(),
-                'remaining':
-                self.stats.estimate_remaining_time()
-            })
+            self.progress_callback(progress)
 
     def safe_copy(self, source: Path, dest: Path) -> bool:
         """Copie sécurisée d'un fichier avec gestion des erreurs"""
@@ -561,183 +475,72 @@ class DossierSync:
                 f"Erreur lors de la copie de {source} vers {dest}: {e}")
             return False
 
-    def synchronize(self,
-                    mode: str,
-                    files_to_create: Optional[List[str]] = None,
-                    files_to_create_reverse: Optional[List[str]] = None,
-                    files_to_update: Optional[List[str]] = None,
-                    files_to_delete: Optional[List[str]] = None) -> None:
-        """Synchronise les dossiers selon le mode choisi."""
+    def synchronize(self) -> None:
+        """Effectue la synchronisation selon le mode sélectionné."""
         try:
-            self.cancelled = False
-            self.stats.start_time = datetime.now()
-            logger.info(f"Début de la synchronisation en mode {mode}")
+            mode = st.session_state.get('mode', 'Non défini')
+            logger.info(f"Début de la synchronisation en mode: {mode}")
 
-            if mode == "Bidirectionnel (miroir)":
-                logger.info("Mode bidirectionnel activé")
+            # Créer les dossiers nécessaires
+            self.dossier_b.mkdir(parents=True, exist_ok=True)
+            self.dossier_a.mkdir(parents=True, exist_ok=True)
 
-                # Récupérer les fichiers à copier dans chaque direction
-                files_a_to_b = files_to_create or []
-                files_b_to_a = files_to_create_reverse or [
-                ]  # Utiliser directement le paramètre
+            # Récupérer les fichiers sélectionnés
+            files_to_create = st.session_state.files_to_create
+            files_to_update = st.session_state.files_to_update
+            files_to_delete = st.session_state.files_to_delete
+            files_to_create_reverse = st.session_state.get(
+                'files_to_create_reverse', [])
 
-                logger.info(f"Fichiers à copier A->B: {len(files_a_to_b)}")
-                logger.info(f"Fichiers à copier B->A: {len(files_b_to_a)}")
+            total_operations = (len(files_to_create) + len(files_to_update) +
+                                len(files_to_delete) +
+                                len(files_to_create_reverse))
 
-                # 1. Copier les fichiers de A vers B
-                for file in files_a_to_b:
-                    if self.cancelled:
-                        raise InterruptedError("Synchronisation annulée")
+            if total_operations == 0:
+                logger.info("Aucune modification à effectuer")
+                return
 
+            operations_done = 0
+
+            # Copier/Mettre à jour les fichiers dans le sens principal
+            for file in files_to_create + files_to_update:
+                if mode == "B vers A (restauration)":
+                    source = self.dossier_b / file
+                    dest = self.dossier_a / file
+                else:
                     source = self.dossier_a / file
                     dest = self.dossier_b / file
 
-                    try:
-                        if source.is_file():
-                            dest.parent.mkdir(parents=True, exist_ok=True)
-                            shutil.copy2(source, dest)
-                            self.stats.files_created += 1
-                            logger.info(f"Copié A->B: {file}")
-                        elif source.is_dir():
-                            dest.mkdir(parents=True, exist_ok=True)
-                            self.stats.dirs_created += 1
-                            logger.info(f"Dossier créé A->B: {file}")
-                    except Exception as e:
-                        logger.error(
-                            f"Erreur lors de la copie A->B de {file}: {e}")
-                        raise
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, dest)
+                operations_done += 1
+                self._update_progress(operations_done / total_operations)
 
-                # 2. Copier les fichiers de B vers A
-                for file in files_b_to_a:
-                    if self.cancelled:
-                        raise InterruptedError("Synchronisation annulée")
+            # Copier les fichiers dans le sens inverse (mode bidirectionnel)
+            if mode == "Bidirectionnel (miroir)" and files_to_create_reverse:
+                for file in files_to_create_reverse:
+                    source = self.dossier_b / file
+                    dest = self.dossier_a / file
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, dest)
+                    operations_done += 1
+                    self._update_progress(operations_done / total_operations)
 
-                        source = self.dossier_b / file
-                        dest = self.dossier_a / file
-
-                    try:
-                        if source.is_file():
-                            dest.parent.mkdir(parents=True, exist_ok=True)
-                            shutil.copy2(source, dest)
-                            self.stats.files_created += 1
-                            logger.info(f"Copié B->A: {file}")
-                        elif source.is_dir():
-                            dest.mkdir(parents=True, exist_ok=True)
-                            self.stats.dirs_created += 1
-                            logger.info(f"Dossier créé B->A: {file}")
-                    except Exception as e:
-                        logger.error(
-                            f"Erreur lors de la copie B->A de {file}: {e}")
-                        raise
-
-                # 3. Mettre à jour les fichiers communs
-                for file in (files_to_update or []):
-                    if self.cancelled:
-                        raise InterruptedError("Synchronisation annulée")
-
-                    file_a = self.dossier_a / file
-                    file_b = self.dossier_b / file
-
-                    try:
-                        # Copier le plus récent vers le plus ancien
-                        if file_a.stat().st_mtime > file_b.stat().st_mtime:
-                            shutil.copy2(file_a, file_b)
-                            self.stats.files_updated += 1
-                            logger.info(f"Mis à jour A->B: {file}")
-                        else:
-                            shutil.copy2(file_b, file_a)
-                            self.stats.files_updated += 1
-                            logger.info(f"Mis à jour B->A: {file}")
-                    except Exception as e:
-                        logger.error(
-                            f"Erreur lors de la mise à jour de {file}: {e}")
-                        raise
-
-                logger.info(
-                    "Synchronisation bidirectionnelle terminée avec succès")
-                return
-
-            # Code existant pour les autres modes...
-
-            # Créer les nouveaux fichiers
-            for file in files_to_create:
-                if self.cancelled:
-                    raise InterruptedError("Synchronisation annulée")
-
-                source = self.dossier_a / file
-                dest = self.dossier_b / file
-
-                logger.info(f"Création de {file}")
-                if source.is_dir():
-                    # Créer le dossier
-                    dest.mkdir(parents=True, exist_ok=True)
-                    self.stats.dirs_created += 1
-                    self.stats.created_files.append(file)
-                else:
-                    # Copier le fichier
-                    if self.safe_copy(source, dest):
-                        self.stats.files_created += 1
-                        self.stats.created_files.append(file)
-                        self.stats.total_size += source.stat().st_size
-                        logger.info(f"Fichier créé : {file}")
+            # Supprimer les fichiers si nécessaire
+            if mode != "Bidirectionnel (miroir)" and files_to_delete:
+                for file in files_to_delete:
+                    if mode == "B vers A (restauration)":
+                        (self.dossier_a / file).unlink()
                     else:
-                        logger.warning(f"Échec de la création de {file}")
+                        (self.dossier_b / file).unlink()
+                    operations_done += 1
+                    self._update_progress(operations_done / total_operations)
 
-            # Mettre à jour les fichiers
-            for file in files_to_update:
-                if self.cancelled:
-                    raise InterruptedError("Synchronisation annulée")
-
-                source = self.dossier_a / file
-                dest = self.dossier_b / file
-
-                logger.info(f"Mise à jour de {file}")
-                if self.safe_copy(source, dest):
-                    self.stats.files_updated += 1
-                    self.stats.updated_files.append(file)
-                    self.stats.total_size += source.stat().st_size
-                    logger.info(f"Fichier mis à jour : {file}")
-                else:
-                    logger.warning(f"Échec de la mise à jour de {file}")
-
-            # Supprimer les fichiers
-            if files_to_delete:
-                # Trier les fichiers et dossiers
-                files = [
-                    f for f in files_to_delete
-                    if (self.dossier_b / f).is_file()
-                ]
-                dirs = [
-                    d for d in files_to_delete
-                    if (self.dossier_b / d).is_dir()
-                ]
-                dirs.sort(key=lambda x: len(Path(x).parts), reverse=True)
-
-                # Supprimer les fichiers
-                for file in files:
-                    if self.cancelled:
-                        raise InterruptedError("Synchronisation annulée")
-
-                    file_path = self.dossier_b / file
-                    logger.info(f"Suppression du fichier {file}")
-
-                    if self.safe_delete(file_path):
-                        self.stats.files_deleted += 1
-                        self.stats.deleted_files.append(file)
-                        logger.info(f"Fichier supprimé : {file}")
-                    else:
-                        logger.warning(f"Échec de la suppression de {file}")
-
-            self.stats.end_time = datetime.now()
-            logger.info("Synchronisation terminée")
-            logger.info(f"Fichiers créés : {len(self.stats.created_files)}")
-            logger.info(
-                f"Fichiers mis à jour : {len(self.stats.updated_files)}")
-            logger.info(
-                f"Fichiers supprimés : {len(self.stats.deleted_files)}")
+            logger.info("Synchronisation terminée avec succès")
+            st.session_state.sync_done = True
 
         except Exception as e:
-            logger.error(f"Erreur lors de la synchronisation : {str(e)}")
+            logger.error(f"Erreur lors de la synchronisation: {e}")
             raise
 
     def show_ui(self):
@@ -877,7 +680,7 @@ class DossierSync:
                         # Options pour les fichiers à créer
                         if st.session_state.comparison_results.get(
                                 'to_create'):
-                            st.write("#### �� Fichiers à créer")
+                            st.write("#### 📝 Fichiers à créer")
                             create_cols = st.columns([2, 1, 1, 1])
                             create_cols[0].write(
                                 f"**{len(st.session_state.comparison_results['to_create'])} fichiers**"
@@ -1069,16 +872,7 @@ class DossierSync:
                         elif st.session_state.confirm_state == "confirmed":
                             try:
                                 # Lancer la synchronisation
-                                self.synchronize(
-                                    mode=st.session_state.mode,
-                                    files_to_create=st.session_state.
-                                    files_to_create,
-                                    files_to_create_reverse=st.session_state.
-                                    files_to_create_reverse,
-                                    files_to_update=st.session_state.
-                                    files_to_update,
-                                    files_to_delete=st.session_state.
-                                    files_to_delete)
+                                self.synchronize()
 
                                 # Afficher le succès
                                 st.success(
@@ -1149,12 +943,23 @@ def format_time(seconds: float) -> str:
 
 
 def main() -> None:
-    """Point d'entrée principal de l'application"""
+    """Point d'entrée principal de l'application."""
     try:
-        # Créer une instance de DossierSync avec des chemins par défaut
-        sync = DossierSync("", "")
+        # Créer une instance de DossierSync avec les chemins sélectionnés
+        dossier_a = st.session_state.get('dossier_a', '')
+        dossier_b = st.session_state.get('dossier_b', '')
 
-        # Appeler show_ui avec l'instance
+        if dossier_a and dossier_b:
+            logger.info(f"Dossier source sélectionné: {dossier_a}")
+            logger.info(f"Dossier destination sélectionné: {dossier_b}")
+
+            sync = DossierSync(dossier_a, dossier_b)
+            results = sync.compare_folders()
+            logger.info(f"Résultats de la comparaison: {results}")
+        else:
+            sync = DossierSync("", "")
+
+        # Afficher l'interface
         sync.show_ui()
 
     except Exception as e:
