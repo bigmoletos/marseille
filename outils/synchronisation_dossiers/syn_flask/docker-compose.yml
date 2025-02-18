@@ -1,0 +1,38 @@
+services:
+  sync_app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sync_app
+    ports:
+      - "5002:5001" # redirection port de l'application vers le port 5002
+    volumes:
+      # Pour accéder aux dossiers de l'hôte
+      - /:/host:ro
+      # Pour accéder aux lecteurs montés dans WSL
+      - /mnt:/mnt:ro
+      # Pour les logs
+      - ./logs:/app/logs
+      # Pour les fichiers de l'application (sans écraser venv)
+      - ./app.py:/app/app.py
+      - ./sync_folders.sh:/app/sync_folders.sh
+      - ./templates:/app/templates
+      - ./static:/app/static
+      - ./requirements.txt:/app/requirements.txt
+    environment:
+      - FLASK_APP=app.py
+      - FLASK_ENV=production
+      - PYTHONUNBUFFERED=1
+      - TZ=Europe/Paris
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

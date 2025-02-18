@@ -11,35 +11,97 @@ import tempfile
 import time
 from synchornisation_dossiers_web import DossierSync
 import streamlit as st
+import unittest
+import json
 
 # Configuration du logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 
-class TestSynchronisation:
+class TestSynchronisation(unittest.TestCase):
+    """Tests de la synchronisation de dossiers."""
 
-    def __init__(self):
-        # Création du dossier de tests dans le répertoire courant
-        self.test_root = Path("test_sync_folders")
-        self.cleanup()  # Nettoyage au démarrage
-        self.test_root.mkdir(exist_ok=True)
-        self.dir_a = self.test_root / "dossier_a"
-        self.dir_b = self.test_root / "dossier_b"
+    def setUp(self):
+        """Initialisation avant chaque test."""
+        # Création des dossiers de test temporaires
+        self.test_dir = Path(tempfile.mkdtemp())
+        self.dir_a = self.test_dir / "dossier_a"
+        self.dir_b = self.test_dir / "dossier_b"
         self.dir_a.mkdir()
         self.dir_b.mkdir()
 
-    def cleanup(self):
-        """Nettoie les dossiers de test"""
-        if self.test_root.exists():
-            shutil.rmtree(self.test_root)
+        # Initialisation de la session Streamlit
+        if 'dossier_a' not in st.session_state:
+            st.session_state.dossier_a = str(self.dir_a)
+        if 'dossier_b' not in st.session_state:
+            st.session_state.dossier_b = str(self.dir_b)
+        if 'mode' not in st.session_state:
+            st.session_state.mode = "A vers B (sauvegarde)"
+
+        # Création de l'instance de test
+        self.sync = DossierSync()
+
+    def tearDown(self):
+        """Nettoyage après chaque test."""
+        shutil.rmtree(self.test_dir)
 
     def create_test_files(self, directory: Path, files: dict):
-        """Crée des fichiers de test avec le contenu spécifié"""
-        for filename, content in files.items():
-            file_path = directory / filename
+        """Crée des fichiers de test."""
+        for path, content in files.items():
+            file_path = directory / path
+            file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content)
-            time.sleep(0.1)
+
+    def test_compare_folders_a_to_b(self):
+        """Test de la comparaison A vers B."""
+        # Création des fichiers de test
+        files_a = {
+            'file1.txt': 'content1',
+            'dir/file2.txt': 'content2',
+            'file3.txt': 'content3'
+        }
+        files_b = {'file1.txt': 'different', 'other.txt': 'other'}
+
+        self.create_test_files(self.dir_a, files_a)
+        self.create_test_files(self.dir_b, files_b)
+
+        # Test de la comparaison
+        st.session_state.mode = "A vers B (sauvegarde)"
+        results = self.sync.compare_folders()
+
+        # Vérifications
+        self.assertIn('to_create', results)
+        self.assertIn('to_update', results)
+        self.assertEqual(set(results['to_create']),
+                         {'dir/file2.txt', 'file3.txt'})
+        self.assertEqual(set(results['to_update']), {'file1.txt'})
+
+    def test_synchronize(self):
+        """Test de la synchronisation."""
+        # Création des fichiers de test
+        files_a = {'test.txt': 'content'}
+        self.create_test_files(self.dir_a, files_a)
+
+        # Configuration de la session
+        st.session_state.files_to_create = ['test.txt']
+        st.session_state.files_to_update = []
+        st.session_state.files_to_delete = []
+        st.session_state.mode = "A vers B (sauvegarde)"
+
+        # Test de la synchronisation
+        self.sync.synchronize()
+
+        # Vérification
+        self.assertTrue((self.dir_b / 'test.txt').exists())
+        self.assertEqual((self.dir_b / 'test.txt').read_text(), 'content')
+
+    def test_error_handling(self):
+        """Test de la gestion des erreurs."""
+        # Test avec un dossier inexistant
+        st.session_state.dossier_a = "/chemin/inexistant"
+        with self.assertRaises(Exception):
+            self.sync.compare_folders()
 
     def print_directory_contents(self, directory: Path, name: str):
         """Affiche le contenu d'un dossier"""
@@ -66,8 +128,7 @@ class TestSynchronisation:
         self.print_directory_contents(self.dir_b, "B")
 
         st.session_state.mode = "A vers B (sauvegarde)"
-        sync = DossierSync(self.dir_a, self.dir_b)
-        results = sync.compare_folders()
+        results = self.sync.compare_folders()
 
         assert set(results['to_create']) == {'sync_manifest - Copie.json', 'sync_manifest - Copie (2).json'}, \
             "Les fichiers à créer ne sont pas corrects"
@@ -92,8 +153,7 @@ class TestSynchronisation:
         self.create_test_files(self.dir_b, files_b)
 
         st.session_state.mode = "A vers B (sauvegarde)"
-        sync = DossierSync(self.dir_a, self.dir_b)
-        results = sync.compare_folders()
+        results = self.sync.compare_folders()
 
         assert not results[
             'to_create'], "Il ne devrait pas y avoir de fichiers à créer"
@@ -117,8 +177,7 @@ class TestSynchronisation:
         self.create_test_files(self.dir_b, files_b)
 
         st.session_state.mode = "B vers A (restauration)"
-        sync = DossierSync(self.dir_a, self.dir_b)
-        results = sync.compare_folders()
+        results = self.sync.compare_folders()
 
         assert not results[
             'to_create'], "Il ne devrait pas y avoir de fichiers à créer"
@@ -140,8 +199,7 @@ class TestSynchronisation:
         self.create_test_files(self.dir_b, files_b)
 
         st.session_state.mode = "B vers A (restauration)"
-        sync = DossierSync(self.dir_a, self.dir_b)
-        results = sync.compare_folders()
+        results = self.sync.compare_folders()
 
         assert not results[
             'to_create'], "Il ne devrait pas y avoir de fichiers à créer"
@@ -174,8 +232,7 @@ class TestSynchronisation:
         self.print_directory_contents(self.dir_b, "B")
 
         st.session_state.mode = "B vers A (restauration)"
-        sync = DossierSync(self.dir_a, self.dir_b)
-        results = sync.compare_folders()
+        results = self.sync.compare_folders()
 
         logger.info(f"Résultats complets: {results}")
 
@@ -225,8 +282,7 @@ class TestSynchronisation:
         self.print_directory_contents(subdir_b, "B/subdir")
 
         st.session_state.mode = "B vers A (restauration)"
-        sync = DossierSync(self.dir_a, self.dir_b)
-        results = sync.compare_folders()
+        results = self.sync.compare_folders()
 
         logger.info(f"Résultats complets: {results}")
 
@@ -260,18 +316,17 @@ class TestSynchronisation:
             file_path.write_text(content)
 
         # Test du scan
-        sync = DossierSync(self.dir_a, self.dir_b)
-        scanned_files = sync._scan_folder(self.dir_a)
+        results = self.sync._scan_folder(self.dir_a)
 
         # Conversion des chemins en relatif pour la comparaison
         expected_files = set(files.keys())
-        scanned_files = set(scanned_files)
+        results = set(results)
 
         logger.info(f"Fichiers attendus: {sorted(expected_files)}")
-        logger.info(f"Fichiers scannés: {sorted(scanned_files)}")
+        logger.info(f"Fichiers scannés: {sorted(results)}")
 
-        assert scanned_files == expected_files, \
-            f"Le scan n'a pas retourné les bons fichiers.\nAttendu: {expected_files}\nObtenu: {scanned_files}"
+        assert results == expected_files, \
+            f"Le scan n'a pas retourné les bons fichiers.\nAttendu: {expected_files}\nObtenu: {results}"
 
     def test_a_vers_b_cas3(self):
         """Test du mode A vers B - Cas 3: Fichiers avec espaces et caractères spéciaux"""
@@ -292,8 +347,7 @@ class TestSynchronisation:
         self.print_directory_contents(self.dir_b, "B")
 
         st.session_state.mode = "A vers B (sauvegarde)"
-        sync = DossierSync(self.dir_a, self.dir_b)
-        results = sync.compare_folders()
+        results = self.sync.compare_folders()
 
         assert set(results['to_create']) == set(files_a.keys()), \
             "Les fichiers avec caractères spéciaux ne sont pas correctement détectés"
@@ -325,8 +379,7 @@ class TestSynchronisation:
             file_path.write_text(content)
 
         st.session_state.mode = "A vers B (sauvegarde)"
-        sync = DossierSync(self.dir_a, self.dir_b)
-        results = sync.compare_folders()
+        results = self.sync.compare_folders()
 
         expected_to_create = {
             'dossier1/sous-dossier/fichier2.txt',
@@ -362,8 +415,7 @@ class TestSynchronisation:
             file_path.write_text(content)
 
         st.session_state.mode = "B vers A (restauration)"
-        sync = DossierSync(self.dir_a, self.dir_b)
-        results = sync.compare_folders()
+        results = self.sync.compare_folders()
 
         assert not results[
             'to_create'], "Il ne devrait pas y avoir de fichiers à créer"
@@ -386,8 +438,7 @@ class TestSynchronisation:
         self.create_test_files(self.dir_b, files_b)
 
         st.session_state.mode = "Bidirectionnel (miroir)"
-        sync = DossierSync(self.dir_a, self.dir_b)
-        results = sync.compare_folders()
+        results = self.sync.compare_folders()
 
         assert not results[
             'to_create'], "Il ne devrait pas y avoir de fichiers à créer"
@@ -408,8 +459,7 @@ class TestSynchronisation:
         self.create_test_files(self.dir_b, files_b)
 
         st.session_state.mode = "Bidirectionnel (miroir)"
-        sync = DossierSync(self.dir_a, self.dir_b)
-        results = sync.compare_folders()
+        results = self.sync.compare_folders()
 
         assert not results[
             'to_create'], "Il ne devrait pas y avoir de fichiers à créer"
@@ -504,8 +554,7 @@ class TestSynchronisation:
         # Test du mode A vers B
         logger.info("\n--- Test mode A vers B ---")
         st.session_state.mode = "A vers B (sauvegarde)"
-        sync = DossierSync(dir_a, dir_b)
-        results = sync.compare_folders()
+        results = self.sync.compare_folders()
 
         # Vérifications détaillées
         logger.info("\nContenu des dossiers:")
@@ -546,7 +595,7 @@ def main():
     except AssertionError as e:
         logger.error(f"\n❌ Échec des tests: {e}")
     finally:
-        test.cleanup()
+        test.tearDown()
 
 
 if __name__ == "__main__":

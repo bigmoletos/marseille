@@ -1,3 +1,20 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "requests",
+#     "json",
+#     "urllib.parse",
+#     "logging",
+#     "pandas",
+#     "numpy",
+#     "json",
+#     "logging",
+#     "urllib3",
+# ]
+#
+#
+# ///
+
 import requests
 import json
 import urllib.parse
@@ -43,7 +60,7 @@ response = requests.get(url2)
 # Vérifier que la requête a réussi
 if response.status_code == 200:
     try:
-     data = response.json()
+        data = response.json()
     except json.JSONDecodeError as e:
         print(f"Erreur de décodage JSON : {e}")
         print("Réponse obtenue :")

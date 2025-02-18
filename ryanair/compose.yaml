@@ -1,0 +1,88 @@
+# Comments are provided throughout this file to help you get started.
+# If you need more help, visit the Docker Compose reference guide at
+# https://docs.docker.com/go/compose-spec-reference/
+
+# Here the instructions define your application as a service called "server".
+# This service is built from the Dockerfile in the current directory.
+# You can add other services your application may depend on here, such as a
+# database or a cache. For examples, see the Awesome Compose repository:
+# https://github.com/docker/awesome-compose
+
+version: '3.8'
+
+services:
+  server:
+    build:
+      context: .
+    container_name: ryanair2
+    ports:
+      - "8002:8002"
+    networks:
+      - ryanair-network
+    restart: unless-stopped
+    volumes:
+      - .:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+      - STREAMLIT_SERVER_PORT=8002
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+      - STREAMLIT_SERVER_RUN_ON_SAVE=true
+    command: ["streamlit", "run", "ryanair_v3.py", "--server.port=8002", "--server.address=0.0.0.0", "--server.runOnSave=true"]
+
+# The commented out section below is an example of how to define a PostgreSQL
+# database that your application can use. `depends_on` tells Docker Compose to
+# start the database before your application. The `db-data` volume persists the
+# database data between container restarts. The `db-password` secret is used
+# to set the database password. You must create `db/password.txt` and add
+# a password of your choosing to it before running `docker compose up`.
+#     depends_on:
+#       db:
+#         condition: service_healthy
+#   db:
+#     image: postgres
+#     restart: always
+#     user: postgres
+#     secrets:
+#       - db-password
+#     volumes:
+#       - db-data:/var/lib/postgresql/data
+#     environment:
+#       - POSTGRES_DB=example
+#       - POSTGRES_PASSWORD_FILE=/run/secrets/db-password
+#     expose:
+#       - 5432
+#     healthcheck:
+#       test: [ "CMD", "pg_isready" ]
+#       interval: 10s
+#       timeout: 5s
+#       retries: 5
+# volumes:
+#   db-data:
+# secrets:
+#   db-password:
+#     file: db/password.txt
+
+  chrome:
+    image: selenium/standalone-chrome:latest
+    container_name: chrome-debug
+    ports:
+      - "4444:4444"
+      - "7900:7900"
+    networks:
+      - ryanair-network
+    environment:
+      - SE_NODE_MAX_SESSIONS=8
+      - SE_NODE_OVERRIDE_MAX_SESSIONS=true
+      - SE_VNC_NO_PASSWORD=1
+    volumes:
+      - /dev/shm:/dev/shm
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:4444"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+networks:
+  ryanair-network:
+    driver: bridge
+

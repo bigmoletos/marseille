@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Synchronisation de dossiers</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Synchronisation de dossiers</h1>
+
+        {% if error %}
+        <div class="error">{{ error }}</div>
+        {% endif %}
+
+        {% if success %}
+        <div class="success">{{ success }}</div>
+        {% endif %}
+
+        <form action="{{ url_for('compare_folders') }}" method="post">
+            <div class="form-group">
+                <label for="source_dir">Dossier source (A)</label>
+                <input type="text" id="source_dir" name="source_dir" value="{{ source_dir or '' }}"
+                       placeholder="Exemple: C:\Documents\DossierSource" required>
+                <small class="form-text text-muted">Entrez le chemin complet du dossier source</small>
+            </div>
+
+            <div class="form-group">
+                <label for="dest_dir">Dossier destination (B)</label>
+                <input type="text" id="dest_dir" name="dest_dir" value="{{ dest_dir or '' }}"
+                       placeholder="Exemple: C:\Documents\DossierDestination" required>
+                <small class="form-text text-muted">Entrez le chemin complet du dossier destination</small>
+            </div>
+
+            <div class="form-group">
+                <label for="mode">Mode de synchronisation</label>
+                <select id="mode" name="mode" required>
+                    <option value="A vers B (sauvegarde)" {% if mode == 'A vers B (sauvegarde)' %}selected{% endif %}>
+                        A vers B (sauvegarde)
+                    </option>
+                    <option value="B vers A (restauration)" {% if mode == 'B vers A (restauration)' %}selected{% endif %}>
+                        B vers A (restauration)
+                    </option>
+                    <option value="Bidirectionnel (miroir)" {% if mode == 'Bidirectionnel (miroir)' %}selected{% endif %}>
+                        Bidirectionnel (miroir)
+                    </option>
+                </select>
+            </div>
+
+            <div class="buttons-container">
+                <button type="submit" class="btn btn-primary">Comparer les dossiers</button>
+                <button type="reset" class="btn btn-secondary">Annuler</button>
+            </div>
+        </form>
+
+        {% if comparison_result %}
+        <div class="result">
+            <h2>Synthèse de la comparaison</h2>
+            <div class="summary">
+                <div class="summary-item">
+                    <h3>{{ comparison_result.to_create|length }}</h3>
+                    <p>Fichiers à créer</p>
+                </div>
+                <div class="summary-item">
+                    <h3>{{ comparison_result.to_update|length }}</h3>
+                    <p>Fichiers à mettre à jour</p>
+                </div>
+                <div class="summary-item">
+                    <h3>{{ comparison_result.to_delete|length }}</h3>
+                    <p>Fichiers à supprimer</p>
+                </div>
+                <div class="summary-item">
+                    <h3>{{ comparison_result.to_create_reverse|length }}</h3>
+                    <p>Fichiers à créer en sens inverse</p>
+                </div>
+            </div>
+
+            {% if comparison_result.to_create or comparison_result.to_update or
+                  comparison_result.to_delete or comparison_result.to_create_reverse %}
+
+            <div class="details-container">
+                <h3>Détails de la comparaison</h3>
+
+                {% if comparison_result.to_create %}
+                <div class="file-list">
+                    <h4>Fichiers à créer ({{ comparison_result.to_create|length }})</h4>
+                    <ul>
+                        {% for file in comparison_result.to_create %}
+                        <li>{{ file }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
+
+                {% if comparison_result.to_update %}
+                <div class="file-list">
+                    <h4>Fichiers à mettre à jour ({{ comparison_result.to_update|length }})</h4>
+                    <ul>
+                        {% for file in comparison_result.to_update %}
+                        <li>{{ file }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
+
+                {% if comparison_result.to_delete %}
+                <div class="file-list">
+                    <h4>Fichiers à supprimer ({{ comparison_result.to_delete|length }})</h4>
+                    <ul>
+                        {% for file in comparison_result.to_delete %}
+                        <li>{{ file }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
+
+                {% if comparison_result.to_create_reverse %}
+                <div class="file-list">
+                    <h4>Fichiers à créer en sens inverse ({{ comparison_result.to_create_reverse|length }})</h4>
+                    <ul>
+                        {% for file in comparison_result.to_create_reverse %}
+                        <li>{{ file }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
+            </div>
+
+            <form action="{{ url_for('sync_folders') }}" method="post">
+                <input type="hidden" name="source_dir" value="{{ source_dir }}">
+                <input type="hidden" name="dest_dir" value="{{ dest_dir }}">
+                <input type="hidden" name="mode" value="{{ mode }}">
+                <input type="hidden" name="files_to_create" value="{{ comparison_result.to_create|join(',') }}">
+                <input type="hidden" name="files_to_update" value="{{ comparison_result.to_update|join(',') }}">
+                <input type="hidden" name="files_to_delete" value="{{ comparison_result.to_delete|join(',') }}">
+                <input type="hidden" name="files_to_create_reverse" value="{{ comparison_result.to_create_reverse|join(',') }}">
+                <button type="submit" class="btn btn-success">Synchroniser</button>
+            </form>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+</body>
+</html>
