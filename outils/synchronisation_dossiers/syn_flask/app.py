@@ -36,10 +36,9 @@ logger.addHandler(console_handler)
 app = Flask(__name__)
 app.secret_key = os.urandom(24)  # Pour les messages flash
 
-# Obtenir le chemin absolu du script bash
+# Obtenir le chemin absolu du répertoire de l'application
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-SYNC_SCRIPT = os.path.join(SCRIPT_DIR, 'sync_folders.sh')
-logger.debug(f"Chemin du script de synchronisation : {SYNC_SCRIPT}")
+logger.debug(f"Répertoire de l'application : {SCRIPT_DIR}")
 
 
 def debug_list_host_directory():
@@ -211,6 +210,7 @@ def compare_folders():
         ps_script = os.path.join(SCRIPT_DIR, 'compare_folders.ps1')
         with open(ps_script, 'w', encoding='utf-8') as f:
             f.write(f"""
+$ErrorActionPreference = "Stop"
 $source = "{source_dir}"
 $dest = "{dest_dir}"
 $comparison = @{{
@@ -218,37 +218,152 @@ $comparison = @{{
     "to_update" = @()
     "to_delete" = @()
     "to_create_reverse" = @()
+    "to_create_dirs" = @()
+    "to_delete_dirs" = @()
+    "to_create_dirs_reverse" = @()
 }}
 
-# Obtenir tous les fichiers source
-$sourceFiles = Get-ChildItem -Path $source -Recurse -File
-$destFiles = Get-ChildItem -Path $dest -Recurse -File
+# Fonction pour obtenir le chemin relatif
+function Get-RelativePath($path, $basePath) {{
+    return $path.Substring($basePath.Length).TrimStart('\/')
+}}
 
-# Comparer les fichiers
-foreach ($sourceFile in $sourceFiles) {{
-    $relativePath = $sourceFile.FullName.Substring($source.Length + 1)
-    $destFile = Join-Path $dest $relativePath
+# Obtenir tous les fichiers et dossiers source et destination
+$sourceItems = Get-ChildItem -Path $source -Recurse
+$destItems = Get-ChildItem -Path $dest -Recurse
 
-    if (Test-Path $destFile) {{
-        $destItem = Get-Item $destFile
-        if ($sourceFile.LastWriteTime -gt $destItem.LastWriteTime) {{
-            $comparison.to_update += $relativePath
-        }}
+# Créer des tables de hachage pour une recherche plus rapide
+$sourceDirs = @{{}}
+$sourceFiles = @{{}}
+$destDirs = @{{}}
+$destFiles = @{{}}
+
+# Remplir les tables de hachage source
+foreach ($item in $sourceItems) {{
+    $relativePath = Get-RelativePath $item.FullName $source
+    if ($item.PSIsContainer) {{
+        $sourceDirs[$relativePath] = $item
     }} else {{
-        $comparison.to_create += $relativePath
+        $sourceFiles[$relativePath] = $item
     }}
 }}
 
-# Vérifier les fichiers à supprimer
-foreach ($destFile in $destFiles) {{
-    $relativePath = $destFile.FullName.Substring($dest.Length + 1)
-    $sourceFile = Join-Path $source $relativePath
+# Remplir les tables de hachage destination
+foreach ($item in $destItems) {{
+    $relativePath = Get-RelativePath $item.FullName $dest
+    if ($item.PSIsContainer) {{
+        $destDirs[$relativePath] = $item
+    }} else {{
+        $destFiles[$relativePath] = $item
+    }}
+}}
 
-    if (-not (Test-Path $sourceFile)) {{
-        if ("{mode}" -eq "B vers A (restauration)") {{
-            $comparison.to_create_reverse += $relativePath
-        }} else {{
-            $comparison.to_delete += $relativePath
+switch ("{mode}") {{
+    "A vers B (sauvegarde)" {{
+        # Fichiers et dossiers à créer ou mettre à jour dans B
+        foreach ($relativePath in $sourceFiles.Keys) {{
+            $sourceFile = $sourceFiles[$relativePath]
+            if ($destFiles.ContainsKey($relativePath)) {{
+                $destFile = $destFiles[$relativePath]
+                if ($sourceFile.LastWriteTime -gt $destFile.LastWriteTime) {{
+                    $comparison.to_update += $relativePath
+                }}
+            }} else {{
+                $comparison.to_create += $relativePath
+            }}
+        }}
+
+        # Dossiers à créer dans B
+        foreach ($relativePath in $sourceDirs.Keys) {{
+            if (-not $destDirs.ContainsKey($relativePath)) {{
+                $comparison.to_create_dirs += $relativePath
+            }}
+        }}
+
+        # Fichiers et dossiers à supprimer dans B
+        foreach ($relativePath in $destFiles.Keys) {{
+            if (-not $sourceFiles.ContainsKey($relativePath)) {{
+                $comparison.to_delete += $relativePath
+            }}
+        }}
+        foreach ($relativePath in $destDirs.Keys) {{
+            if (-not $sourceDirs.ContainsKey($relativePath)) {{
+                $comparison.to_delete_dirs += $relativePath
+            }}
+        }}
+    }}
+    "B vers A (restauration)" {{
+        # Fichiers et dossiers à créer ou mettre à jour dans A
+        foreach ($relativePath in $destFiles.Keys) {{
+            $destFile = $destFiles[$relativePath]
+            if ($sourceFiles.ContainsKey($relativePath)) {{
+                $sourceFile = $sourceFiles[$relativePath]
+                if ($destFile.LastWriteTime -gt $sourceFile.LastWriteTime) {{
+                    $comparison.to_create_reverse += $relativePath
+                }}
+            }} else {{
+                $comparison.to_create_reverse += $relativePath
+            }}
+        }}
+
+        # Dossiers à créer dans A
+        foreach ($relativePath in $destDirs.Keys) {{
+            if (-not $sourceDirs.ContainsKey($relativePath)) {{
+                $comparison.to_create_dirs_reverse += $relativePath
+            }}
+        }}
+
+        # Fichiers et dossiers à supprimer dans A
+        foreach ($relativePath in $sourceFiles.Keys) {{
+            if (-not $destFiles.ContainsKey($relativePath)) {{
+                $comparison.to_delete += $relativePath
+            }}
+        }}
+        foreach ($relativePath in $sourceDirs.Keys) {{
+            if (-not $destDirs.ContainsKey($relativePath)) {{
+                $comparison.to_delete_dirs += $relativePath
+            }}
+        }}
+    }}
+    "Bidirectionnel (miroir)" {{
+        # Fichiers à créer ou mettre à jour dans B
+        foreach ($relativePath in $sourceFiles.Keys) {{
+            $sourceFile = $sourceFiles[$relativePath]
+            if ($destFiles.ContainsKey($relativePath)) {{
+                $destFile = $destFiles[$relativePath]
+                if ($sourceFile.LastWriteTime -gt $destFile.LastWriteTime) {{
+                    $comparison.to_update += $relativePath
+                }}
+            }} else {{
+                $comparison.to_create += $relativePath
+            }}
+        }}
+
+        # Dossiers à créer dans B
+        foreach ($relativePath in $sourceDirs.Keys) {{
+            if (-not $destDirs.ContainsKey($relativePath)) {{
+                $comparison.to_create_dirs += $relativePath
+            }}
+        }}
+
+        # Fichiers à créer ou mettre à jour dans A
+        foreach ($relativePath in $destFiles.Keys) {{
+            $destFile = $destFiles[$relativePath]
+            if ($sourceFiles.ContainsKey($relativePath)) {{
+                $sourceFile = $sourceFiles[$relativePath]
+                if ($destFile.LastWriteTime -gt $sourceFile.LastWriteTime) {{
+                    $comparison.to_create_reverse += $relativePath
+                }}
+            }} else {{
+                $comparison.to_create_reverse += $relativePath
+            }}
+        }}
+
+        # Dossiers à créer dans A
+        foreach ($relativePath in $destDirs.Keys) {{
+            if (-not $sourceDirs.ContainsKey($relativePath)) {{
+                $comparison.to_create_dirs_reverse += $relativePath
+            }}
         }}
     }}
 }}
@@ -362,6 +477,9 @@ def sync_folders():
         files_to_delete = request.form.get('files_to_delete', '')
         files_to_create_reverse = request.form.get('files_to_create_reverse',
                                                    '')
+        dirs_to_create = request.form.get('to_create_dirs', '')
+        dirs_to_delete = request.form.get('to_delete_dirs', '')
+        dirs_to_create_reverse = request.form.get('to_create_dirs_reverse', '')
 
         logger.info("=" * 80)
         logger.info("DÉBUT DE LA SYNCHRONISATION")
@@ -371,9 +489,7 @@ def sync_folders():
         logger.info(f"Mode        : {mode}")
         logger.info("-" * 80)
 
-        # Affichage de la synthèse des actions à effectuer
-        logger.info("ACTIONS À EFFECTUER :")
-
+        # Conversion des listes
         files_to_create_list = files_to_create.split(
             ',') if files_to_create else []
         files_to_update_list = files_to_update.split(
@@ -382,6 +498,20 @@ def sync_folders():
             ',') if files_to_delete else []
         files_to_create_reverse_list = files_to_create_reverse.split(
             ',') if files_to_create_reverse else []
+        dirs_to_create_list = dirs_to_create.split(
+            ',') if dirs_to_create else []
+        dirs_to_delete_list = dirs_to_delete.split(
+            ',') if dirs_to_delete else []
+        dirs_to_create_reverse_list = dirs_to_create_reverse.split(
+            ',') if dirs_to_create_reverse else []
+
+        # Affichage de la synthèse
+        logger.info("ACTIONS À EFFECTUER :")
+
+        if dirs_to_create_list:
+            logger.info(f"Dossiers à créer ({len(dirs_to_create_list)}) :")
+            for dir_path in dirs_to_create_list:
+                logger.info(f"  - {dir_path}")
 
         if files_to_create_list:
             logger.info(f"Fichiers à créer ({len(files_to_create_list)}) :")
@@ -394,11 +524,23 @@ def sync_folders():
             for file in files_to_update_list:
                 logger.info(f"  - {file}")
 
+        if dirs_to_delete_list:
+            logger.info(f"Dossiers à supprimer ({len(dirs_to_delete_list)}) :")
+            for dir_path in dirs_to_delete_list:
+                logger.info(f"  - {dir_path}")
+
         if files_to_delete_list:
             logger.info(
                 f"Fichiers à supprimer ({len(files_to_delete_list)}) :")
             for file in files_to_delete_list:
                 logger.info(f"  - {file}")
+
+        if dirs_to_create_reverse_list:
+            logger.info(
+                f"Dossiers à créer en sens inverse ({len(dirs_to_create_reverse_list)}) :"
+            )
+            for dir_path in dirs_to_create_reverse_list:
+                logger.info(f"  - {dir_path}")
 
         if files_to_create_reverse_list:
             logger.info(
@@ -425,6 +567,16 @@ function EnsureParentDirectory($path) {{
     }}
 }}
 
+# Créer les nouveaux dossiers
+$dirsToCreate = @({','.join([f'"{d}"' for d in dirs_to_create_list])})
+foreach ($dir in $dirsToCreate) {{
+    $destPath = Join-Path $dest $dir
+    if (-not (Test-Path $destPath)) {{
+        New-Item -ItemType Directory -Path $destPath -Force | Out-Null
+        Write-Host "Dossier créé: $dir"
+    }}
+}}
+
 # Créer les nouveaux fichiers
 $filesToCreate = @({','.join([f'"{f}"' for f in files_to_create_list])})
 foreach ($file in $filesToCreate) {{
@@ -432,7 +584,7 @@ foreach ($file in $filesToCreate) {{
     $destPath = Join-Path $dest $file
     EnsureParentDirectory $destPath
     Copy-Item -Path $sourcePath -Destination $destPath -Force
-    Write-Host "Créé: $file"
+    Write-Host "Fichier créé: $file"
 }}
 
 # Mettre à jour les fichiers existants
@@ -441,7 +593,7 @@ foreach ($file in $filesToUpdate) {{
     $sourcePath = Join-Path $source $file
     $destPath = Join-Path $dest $file
     Copy-Item -Path $sourcePath -Destination $destPath -Force
-    Write-Host "Mis à jour: $file"
+    Write-Host "Fichier mis à jour: $file"
 }}
 
 # Supprimer les fichiers
@@ -450,7 +602,28 @@ foreach ($file in $filesToDelete) {{
     $path = Join-Path $dest $file
     if (Test-Path $path) {{
         Remove-Item -Path $path -Force
-        Write-Host "Supprimé: $file"
+        Write-Host "Fichier supprimé: $file"
+    }}
+}}
+
+# Supprimer les dossiers (dans l'ordre inverse pour gérer les sous-dossiers)
+$dirsToDelete = @({','.join([f'"{d}"' for d in dirs_to_delete_list])}) | Sort-Object -Descending
+foreach ($dir in $dirsToDelete) {{
+    $path = Join-Path $dest $dir
+    if (Test-Path $path) {{
+        Remove-Item -Path $path -Force -Recurse
+        Write-Host "Dossier supprimé: $dir"
+    }}
+}}
+
+# Créer les dossiers en sens inverse
+$dirsToCreateReverse = @({','.join([f'"{d}"' for d in dirs_to_create_reverse_list])})
+foreach ($dir in $dirsToCreateReverse) {{
+    $sourcePath = Join-Path $dest $dir
+    $destPath = Join-Path $source $dir
+    if (-not (Test-Path $destPath)) {{
+        New-Item -ItemType Directory -Path $destPath -Force | Out-Null
+        Write-Host "Dossier créé en sens inverse: $dir"
     }}
 }}
 
@@ -461,7 +634,7 @@ foreach ($file in $filesToCreateReverse) {{
     $destPath = Join-Path $source $file
     EnsureParentDirectory $destPath
     Copy-Item -Path $sourcePath -Destination $destPath -Force
-    Write-Host "Créé en sens inverse: $file"
+    Write-Host "Fichier créé en sens inverse: $file"
 }}
 """)
 
