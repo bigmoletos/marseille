@@ -7,7 +7,10 @@ convert_path() {
     # Si le chemin commence par S: ou s:, utiliser directement /mnt/s
     if [[ "$path" =~ ^[Ss]: ]]; then
         # Supprimer le S: initial et convertir les backslashes en slashes
-        echo "/mnt/s/${path:2}" | sed 's/\\/\//g'
+        path=${path#[Ss]:}  # Supprime S: ou s: du début
+        path=${path#/}      # Supprime le slash initial s'il existe
+        path=${path#\\}     # Supprime le backslash initial s'il existe
+        echo "/mnt/s/$path" | sed 's/\\/\//g'
     else
         # Pour les autres chemins, conversion standard
         echo "$path" | sed 's/\\/\//g' | sed 's/^\([A-Za-z]\):/\/mnt\/\L\1/'
@@ -78,13 +81,23 @@ check_rsync() {
         log "Utilisation de rsync système"
         return 0
     else
-        log "ERREUR: rsync n'est pas trouvé"
-        cat > "$1" << EOF
-{
-    "error": "rsync n'est pas trouvé dans le conteneur."
-}
-EOF
-        return 1
+        log "rsync n'est pas trouvé, tentative d'installation..."
+        if command -v apt-get &> /dev/null; then
+            log "Installation de rsync via apt-get..."
+            sudo apt-get update && sudo apt-get install -y rsync
+            if [ $? -eq 0 ]; then
+                log "rsync installé avec succès"
+                return 0
+            else
+                log "ERREUR: Impossible d'installer rsync via apt-get"
+                echo '{"error": "Impossible d installer rsync"}' > "$1"
+                return 1
+            fi
+        else
+            log "ERREUR: apt-get n'est pas disponible"
+            echo '{"error": "apt-get n est pas disponible pour installer rsync"}' > "$1"
+            return 1
+        fi
     fi
 }
 
@@ -110,18 +123,70 @@ check_path() {
     return 0
 }
 
+# Fonction pour nettoyer un chemin
+clean_path() {
+    local path="$1"
+    # Supprimer ./ au début
+    path="${path#./}"
+    # Supprimer les slashes en fin de chemin
+    path="${path%/}"
+    echo "$path"
+}
+
+# Fonction pour vérifier si un chemin est un sous-chemin d'un autre
+is_subpath() {
+    local path="$1"
+    local array=("${!2}")
+
+    for item in "${array[@]}"; do
+        if [[ "$path" != "$item" && "$path" =~ ^"$item"/ ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Fonction pour ajouter un chemin à un tableau sans redondance
+add_to_array() {
+    local path="$1"
+    local array_name="$2"
+    local -n array="$array_name"  # référence au tableau
+
+    path=$(clean_path "$path")
+
+    # Ne pas ajouter si c'est un sous-chemin d'un élément existant
+    if ! is_subpath "$path" array[@]; then
+        # Supprimer les éléments qui sont des sous-chemins du nouveau chemin
+        local new_array=()
+        for item in "${array[@]}"; do
+            if ! [[ "$item" != "$path" && "$item" =~ ^"$path"/ ]]; then
+                new_array+=("$item")
+            fi
+        done
+        array=("${new_array[@]}")
+
+        # Ajouter le nouveau chemin s'il n'existe pas déjà
+        if [[ ! " ${array[@]} " =~ " ${path} " ]]; then
+            array+=("$path")
+        fi
+    fi
+}
+
 # Fonction pour comparer les dossiers
 compare_folders() {
     local source_dir=$(convert_path "$1")
     local dest_dir=$(convert_path "$2")
     local mode="$3"
-    local output_file=$(convert_path "$4")
+    local output_file="$4"
 
     log "=== DÉBUT DE LA COMPARAISON ==="
     log "Mode: $mode"
     log "Source: $1 -> $source_dir"
     log "Destination: $2 -> $dest_dir"
     log "Fichier de sortie: $4 -> $output_file"
+
+    # Vérification de rsync
+    check_rsync "$output_file" || return 1
 
     # Vérification des dossiers
     if [ ! -e "$source_dir" ] || [ ! -e "$dest_dir" ]; then
@@ -132,107 +197,293 @@ compare_folders() {
     # Initialisation des listes
     declare -a to_create to_update to_delete to_create_reverse
 
+    # Fonction pour formater un tableau en JSON
+    array_to_json() {
+        local array=("$@")
+        local result=""
+        local first=true
+
+        echo -n "["
+        for item in "${array[@]}"; do
+            if [ -n "$item" ]; then
+                if [ "$first" = true ]; then
+                    first=false
+                else
+                    echo -n ","
+                fi
+                echo -n "\"$item\""
+            fi
+        done
+        echo "]"
+    }
+
     case "$mode" in
-        "A vers B (sauvegarde)")
+        "A vers B")
             log "Mode de comparaison: A vers B (sauvegarde)"
-            # Utiliser rsync en mode dry-run pour voir ce qui serait copié/supprimé
-            rsync_output=$(rsync -ain --delete "$source_dir/" "$dest_dir/" 2>&1)
 
-            # Analyser la sortie de rsync
+            # Première passe pour détecter les fichiers à créer et mettre à jour
+            log "Commande rsync (passe 1): rsync -navi --itemize-changes --delete \"$source_dir/\" \"$dest_dir/\""
+            temp_file=$(mktemp)
+            rsync -navi --itemize-changes --delete "$source_dir/" "$dest_dir/" > "$temp_file" 2>&1
+            rsync_status=$?
+
+            # Vérifier si rsync a réussi
+            if [ $rsync_status -ne 0 ]; then
+                log "ERREUR: rsync a échoué avec le code $rsync_status"
+                log "Sortie d'erreur: $(cat "$temp_file")"
+                rm "$temp_file"
+                echo '{"error": "rsync a échoué"}' > "$output_file"
+                return 1
+            fi
+
+            # Log de la sortie rsync
+            log "Sortie brute de rsync :"
             while IFS= read -r line; do
-                # Utiliser des expressions régulières plus robustes
-                if [[ "$line" =~ ^\>f.* ]]; then
-                    # Nouveau fichier à créer
-                    file=${line:12}
-                    to_create+=("$file")
-                elif [[ "$line" =~ ^cf.* ]]; then
-                    # Fichier à mettre à jour
-                    file=${line:12}
-                    to_update+=("$file")
-                elif [[ "$line" =~ ^\*deleting.* ]]; then
-                    # Fichier à supprimer
-                    file=${line:10}
-                    to_delete+=("$file")
+                log "  $line"
+            done < "$temp_file"
+
+            log "Analyse des différences..."
+
+            # Lire le fichier temporaire ligne par ligne
+            while IFS= read -r line; do
+                # Ignorer les lignes vides ou de métadonnées
+                [[ -z "$line" ]] && continue
+                [[ "$line" =~ ^building ]] && continue
+                [[ "$line" =~ ^sending ]] && continue
+                [[ "$line" =~ ^sent ]] && continue
+                [[ "$line" =~ ^total ]] && continue
+                [[ "$line" =~ ^created ]] && continue
+                [[ "$line" =~ ^opening ]] && continue
+                [[ "$line" =~ ^receiving ]] && continue
+                [[ "$line" =~ ^received ]] && continue
+                [[ "$line" =~ ^generating ]] && continue
+                [[ "$line" =~ ^cd\+\+\+\+\+\+ ]] && continue
+
+                # Vérifier que la ligne a le bon format (au moins 11 caractères)
+                if [[ ${#line} -lt 11 ]]; then
+                    log "Ligne ignorée (trop courte) : $line"
+                    continue
                 fi
-            done <<< "$rsync_output"
+
+                # Extraire le type de changement et le nom du fichier
+                change_info=${line:0:11}  # Les 11 premiers caractères contiennent l'info de changement
+                file_name=${line:12}      # Le reste est le nom du fichier
+
+                # Analyser les caractères de changement
+                first_char=${change_info:0:1}
+                second_char=${change_info:1:1}
+
+                log "Analyse détaillée: first_char='$first_char' second_char='$second_char' file='$file_name'"
+
+                # Traitement basé sur les caractères de changement
+                case "$first_char" in
+                    ">")
+                        # Nouveau fichier/dossier
+                        log "Nouveau fichier/dossier à créer : $file_name"
+                        add_to_array "$file_name" to_create
+                        ;;
+                    "c" | "<")
+                        # Fichier/dossier modifié
+                        log "Fichier/dossier à mettre à jour : $file_name"
+                        add_to_array "$file_name" to_update
+                        ;;
+                    "*")
+                        # Fichier/dossier à supprimer
+                        log "Fichier/dossier à supprimer : $file_name"
+                        add_to_array "$file_name" to_delete
+                        ;;
+                    ".")
+                        # Fichier/dossier existant, vérifier s'il y a des changements
+                        if [[ ${change_info:3:1} != "." || ${change_info:4:1} != "." || ${change_info:5:1} != "." ]]; then
+                            log "Fichier/dossier existant à mettre à jour (changements détectés) : $file_name"
+                            add_to_array "$file_name" to_update
+                        else
+                            log "Fichier/dossier existant sans changement : $file_name"
+                        fi
+                        ;;
+                esac
+            done < "$temp_file"
+
+            # Supprimer le fichier temporaire
+            rm "$temp_file"
             ;;
 
-        "B vers A (restauration)")
+        "B vers A")
             log "Mode de comparaison: B vers A (restauration)"
-            # Utiliser rsync en mode dry-run pour voir ce qui serait copié/supprimé
-            rsync_output=$(rsync -ain --delete "$dest_dir/" "$source_dir/" 2>&1)
 
-            # Analyser la sortie de rsync
+            # Utiliser rsync en mode dry-run pour comparer les fichiers
+            temp_file=$(mktemp)
+            rsync -ain --delete "$dest_dir/" "$source_dir/" > "$temp_file" 2>&1
+            rsync_status=$?
+
+            # Vérifier si rsync a réussi
+            if [ $rsync_status -ne 0 ]; then
+                log "ERREUR: rsync a échoué avec le code $rsync_status"
+                log "Sortie d'erreur: $(cat "$temp_file")"
+                rm "$temp_file"
+                echo '{"error": "rsync a échoué"}' > "$output_file"
+                return 1
+            fi
+
+            log "Analyse des différences..."
+
             while IFS= read -r line; do
-                if [[ "$line" =~ ^\>f.* ]]; then
-                    # Nouveau fichier à créer dans A
-                    file=${line:12}
-                    to_create_reverse+=("$file")
-                elif [[ "$line" =~ ^cf.* ]]; then
-                    # Fichier à mettre à jour dans A
-                    file=${line:12}
-                    to_create_reverse+=("$file")
-                elif [[ "$line" =~ ^\*deleting.* ]]; then
-                    # Fichier à supprimer dans A
-                    file=${line:10}
-                    to_delete+=("$file")
-                fi
-            done <<< "$rsync_output"
+                [[ -z "$line" ]] && continue
+                [[ "$line" =~ ^building ]] && continue
+                [[ "$line" =~ ^sending ]] && continue
+                [[ "$line" =~ ^sent ]] && continue
+                [[ "$line" =~ ^total ]] && continue
+
+                # Extraire le type de changement et le nom du fichier
+                change_type=${line:0:2}
+                file_name=$(echo "$line" | sed 's/^[^ ]* *//')
+
+                log "Ligne analysée: [$change_type] [$file_name]"
+
+                case "$change_type" in
+                    ">f"|">d"|".d")
+                        log "Nouveau fichier/dossier à créer en sens inverse : $file_name"
+                        add_to_array "$file_name" to_create_reverse
+                        ;;
+                    "cf"|"cd")
+                        log "Fichier/dossier à mettre à jour en sens inverse : $file_name"
+                        add_to_array "$file_name" to_create_reverse
+                        ;;
+                    "*d"|"*f")
+                        log "Fichier/dossier à supprimer : $file_name"
+                        add_to_array "$file_name" to_delete
+                        ;;
+                esac
+            done < "$temp_file"
+
+            # Supprimer le fichier temporaire
+            rm "$temp_file"
             ;;
 
-        "Bidirectionnel (miroir)")
+        "Bidirectionnel")
             log "Mode de comparaison: Bidirectionnel (miroir)"
-            # Vérifier les changements de A vers B
-            rsync_output_ab=$(rsync -ain "$source_dir/" "$dest_dir/" 2>&1)
 
-            # Analyser la sortie de rsync pour A vers B
+            # Vérifier les changements de A vers B
+            temp_file=$(mktemp)
+            rsync -ain "$source_dir/" "$dest_dir/" > "$temp_file" 2>&1
+            rsync_status=$?
+
+            # Vérifier si rsync a réussi
+            if [ $rsync_status -ne 0 ]; then
+                log "ERREUR: rsync a échoué avec le code $rsync_status"
+                log "Sortie d'erreur: $(cat "$temp_file")"
+                rm "$temp_file"
+                echo '{"error": "rsync a échoué"}' > "$output_file"
+                return 1
+            fi
+
+            log "Analyse des différences A vers B..."
+
             while IFS= read -r line; do
-                if [[ "$line" =~ ^\>f.* ]]; then
-                    # Nouveau fichier à créer dans B
-                    file=${line:12}
-                    to_create+=("$file")
-                elif [[ "$line" =~ ^cf.* ]]; then
-                    # Fichier à mettre à jour dans B
-                    file=${line:12}
-                    to_update+=("$file")
-                fi
-            done <<< "$rsync_output_ab"
+                [[ -z "$line" ]] && continue
+                [[ "$line" =~ ^building ]] && continue
+                [[ "$line" =~ ^sending ]] && continue
+                [[ "$line" =~ ^sent ]] && continue
+                [[ "$line" =~ ^total ]] && continue
+
+                # Extraire le type de changement et le nom du fichier
+                change_type=${line:0:2}
+                file_name=$(echo "$line" | sed 's/^[^ ]* *//')
+
+                log "Ligne analysée: [$change_type] [$file_name]"
+
+                case "$change_type" in
+                    ">f"|">d"|".d")
+                        log "Nouveau fichier/dossier à créer : $file_name"
+                        add_to_array "$file_name" to_create
+                        ;;
+                    "cf"|"cd")
+                        log "Fichier/dossier à mettre à jour : $file_name"
+                        add_to_array "$file_name" to_update
+                        ;;
+                esac
+            done < "$temp_file"
+
+            # Supprimer le fichier temporaire
+            rm "$temp_file"
 
             # Vérifier les changements de B vers A
-            rsync_output_ba=$(rsync -ain "$dest_dir/" "$source_dir/" 2>&1)
+            temp_file=$(mktemp)
+            rsync -ain "$dest_dir/" "$source_dir/" > "$temp_file" 2>&1
+            rsync_status=$?
 
-            # Analyser la sortie de rsync pour B vers A
+            # Vérifier si rsync a réussi
+            if [ $rsync_status -ne 0 ]; then
+                log "ERREUR: rsync a échoué avec le code $rsync_status"
+                log "Sortie d'erreur: $(cat "$temp_file")"
+                rm "$temp_file"
+                echo '{"error": "rsync a échoué"}' > "$output_file"
+                return 1
+            fi
+
+            log "Analyse des différences B vers A..."
+
             while IFS= read -r line; do
-                if [[ "$line" =~ ^\>f.* ]]; then
-                    # Nouveau fichier à créer dans A
-                    file=${line:12}
-                    to_create_reverse+=("$file")
-                elif [[ "$line" =~ ^cf.* ]]; then
-                    # Fichier à mettre à jour dans A
-                    file=${line:12}
-                    to_create_reverse+=("$file")
-                fi
-            done <<< "$rsync_output_ba"
+                [[ -z "$line" ]] && continue
+                [[ "$line" =~ ^building ]] && continue
+                [[ "$line" =~ ^sending ]] && continue
+                [[ "$line" =~ ^sent ]] && continue
+                [[ "$line" =~ ^total ]] && continue
+
+                # Extraire le type de changement et le nom du fichier
+                change_type=${line:0:2}
+                file_name=$(echo "$line" | sed 's/^[^ ]* *//')
+
+                log "Ligne analysée: [$change_type] [$file_name]"
+
+                case "$change_type" in
+                    ">f"|">d"|".d")
+                        log "Nouveau fichier/dossier à créer en sens inverse : $file_name"
+                        add_to_array "$file_name" to_create_reverse
+                        ;;
+                    "cf"|"cd")
+                        log "Fichier/dossier à mettre à jour en sens inverse : $file_name"
+                        add_to_array "$file_name" to_create_reverse
+                        ;;
+                esac
+            done < "$temp_file"
+
+            # Supprimer le fichier temporaire
+            rm "$temp_file"
             ;;
     esac
 
-    # Log des résultats
-    log "=== Résultats de la comparaison ==="
-    log "Fichiers à créer: ${to_create[*]}"
-    log "Fichiers à mettre à jour: ${to_update[*]}"
-    log "Fichiers à supprimer: ${to_delete[*]}"
-    log "Fichiers à créer en sens inverse: ${to_create_reverse[*]}"
-
     # Création du JSON de résultat
     {
-        echo "{"
-        echo "  \"to_create\": [$(printf '"%s",' "${to_create[@]}" | sed 's/,$//')], "
-        echo "  \"to_update\": [$(printf '"%s",' "${to_update[@]}" | sed 's/,$//')], "
-        echo "  \"to_delete\": [$(printf '"%s",' "${to_delete[@]}" | sed 's/,$//')], "
-        echo "  \"to_create_reverse\": [$(printf '"%s",' "${to_create_reverse[@]}" | sed 's/,$//')], "
-        echo "  \"error\": null"
-        echo "}"
+        echo -n "{"
+        echo -n "\"to_create\": $(array_to_json "${to_create[@]}"),"
+        echo -n "\"to_update\": $(array_to_json "${to_update[@]}"),"
+        echo -n "\"to_delete\": $(array_to_json "${to_delete[@]}"),"
+        echo -n "\"to_create_reverse\": $(array_to_json "${to_create_reverse[@]}"),"
+        echo "\"error\": null}"
     } > "$output_file"
+
+    # Log des résultats
+    log "=== Résultats de la comparaison ==="
+    log "Fichiers à créer (${#to_create[@]}):"
+    for file in "${to_create[@]}"; do
+        log "  - $file"
+    done
+
+    log "Fichiers à mettre à jour (${#to_update[@]}):"
+    for file in "${to_update[@]}"; do
+        log "  - $file"
+    done
+
+    log "Fichiers à supprimer (${#to_delete[@]}):"
+    for file in "${to_delete[@]}"; do
+        log "  - $file"
+    done
+
+    log "Fichiers à créer en sens inverse (${#to_create_reverse[@]}):"
+    for file in "${to_create_reverse[@]}"; do
+        log "  - $file"
+    done
 
     return 0
 }
@@ -249,15 +500,15 @@ sync_folders() {
     log "Destination: $2 -> $dest_dir"
 
     case "$mode" in
-        "A vers B (sauvegarde)")
+        "A vers B")
             log "Synchronisation A vers B"
             rsync -av --delete "$source_dir/" "$dest_dir/"
             ;;
-        "B vers A (restauration)")
+        "B vers A")
             log "Synchronisation B vers A"
             rsync -av --delete "$dest_dir/" "$source_dir/"
             ;;
-        "Bidirectionnel (miroir)")
+        "Bidirectionnel")
             log "Synchronisation bidirectionnelle"
             # Synchroniser A vers B sans suppression
             rsync -av "$source_dir/" "$dest_dir/"
