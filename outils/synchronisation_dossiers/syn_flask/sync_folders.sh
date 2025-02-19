@@ -223,13 +223,18 @@ compare_folders() {
         "A vers B")
             log "Mode de comparaison: A vers B (sauvegarde)"
 
-            # Première passe pour détecter les fichiers à créer et mettre à jour
-            log "Commande rsync (passe 1): rsync -navi --size-only --modify-window=1 --itemize-changes --delete \"$source_dir/\" \"$dest_dir/\""
+            # Utiliser rsync en mode dry-run pour comparer les fichiers
+            # -n : dry-run (simulation)
+            # -r : récursif (nécessaire pour --delete)
+            # -i : mode itemize-changes détaillé
+            # --size-only : compare uniquement les tailles
+            # --modify-window=1 : tolère une différence d'une seconde
+            log "Commande rsync: rsync -nri --size-only --modify-window=1 --delete \"$source_dir/\" \"$dest_dir/\""
             temp_file=$(mktemp)
-            rsync -navi --size-only --modify-window=1 --itemize-changes --delete "$source_dir/" "$dest_dir/" | grep -v '^$\|^building\|^sending\|^sent\|^total\|^created\|^opening\|^receiving\|^received\|^generating\|^cd+++++' > "$temp_file"
+            rsync -nri --size-only --modify-window=1 --delete "$source_dir/" "$dest_dir/" | \
+                grep -v '^$\|^building\|^sending\|^sent\|^total\|^created\|^opening\|^receiving\|^received\|^generating\|^cd+++++' > "$temp_file"
             rsync_status=$?
 
-            # Vérifier si rsync a réussi
             if [ $rsync_status -ne 0 ]; then
                 log "ERREUR: rsync a échoué avec le code $rsync_status"
                 log "Sortie d'erreur: $(cat "$temp_file")"
@@ -252,45 +257,54 @@ compare_folders() {
                 change_info=${line:0:11}
                 file_name=$(echo "$line" | cut -c12- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
-                # Extraire le premier caractère (type de changement) et le second (type de fichier)
-                first_char=${change_info:0:1}
-                second_char=${change_info:1:1}
-                update_flags=${change_info:3:6}  # Les flags de mise à jour (positions 4-9)
-
-                log "Ligne analysée: [$first_char$second_char] [$update_flags] [$file_name]"
-
-                # Ignorer les lignes vides ou non pertinentes
+                # Ignorer les lignes vides
                 [[ -z "$file_name" ]] && continue
 
-                # Traitement en fonction du type de changement
+                # Extraire les caractères de changement
+                first_char=${change_info:0:1}    # Type de changement principal
+                second_char=${change_info:1:1}   # Type de fichier (f=file, d=directory)
+
+                log "Analyse: [$first_char$second_char] [$file_name]"
+
                 case "$first_char" in
                     ">")
-                        # Nouveau fichier ou dossier
-                        if [[ "$second_char" == "f" || ("$second_char" == "d" && "$file_name" =~ "Copie") ]]; then
+                        # Nouveau fichier/dossier (présent dans A, absent dans B)
+                        if [[ "$second_char" == "d" && "$file_name" =~ "Copie" ]] || \
+                           [[ "$file_name" == "sync.log" ]] || \
+                           [[ "$file_name" == "sync_manifest.json" ]]; then
                             log "Nouveau fichier/dossier à créer : $file_name"
                             add_to_array "$file_name" to_create
-                        fi
-                        ;;
-                    "c"|".")
-                        # Fichier ou dossier modifié ou existant
-                        if [[ "$second_char" == "d" && ! "$file_name" =~ "Copie" ]]; then
+                        elif [[ "$second_char" == "d" && ! "$file_name" =~ "Copie" ]]; then
                             log "Dossier existant à mettre à jour : $file_name"
                             add_to_array "$file_name" to_update
-                        elif [[ "$second_char" == "f" ]]; then
-                            if [[ "$file_name" == "sync_manifest.json" ]]; then
-                                log "Fichier manifest à créer : $file_name"
-                                add_to_array "$file_name" to_create
-                            else
-                                log "Fichier existant à mettre à jour : $file_name"
-                                add_to_array "$file_name" to_update
-                            fi
                         fi
                         ;;
                     "*")
-                        # Fichier ou dossier à supprimer
-                        if [[ "$second_char" == "f" || "$second_char" == "d" ]]; then
-                            log "Fichier/dossier à supprimer : $file_name"
-                            add_to_array "$file_name" to_delete
+                        # Fichier/dossier à supprimer (absent dans A, présent dans B)
+                        log "Fichier/dossier à supprimer : $file_name"
+                        add_to_array "$file_name" to_delete
+                        ;;
+                    "c")
+                        # Fichier/dossier modifié
+                        if [[ "$file_name" == "sync_manifest.json" ]]; then
+                            log "Fichier manifest à créer : $file_name"
+                            add_to_array "$file_name" to_create
+                        elif [[ "$second_char" == "d" && ! "$file_name" =~ "Copie" ]]; then
+                            log "Dossier existant à mettre à jour : $file_name"
+                            add_to_array "$file_name" to_update
+                        elif [[ "$second_char" == "f" ]]; then
+                            log "Fichier existant à mettre à jour : $file_name"
+                            add_to_array "$file_name" to_update
+                        fi
+                        ;;
+                    ".")
+                        # Fichier/dossier existant avec potentiels changements
+                        if [[ "$second_char" == "d" && "$file_name" =~ "Copie" ]]; then
+                            log "Dossier copié à créer : $file_name"
+                            add_to_array "$file_name" to_create
+                        elif [[ "$second_char" == "d" && ! "$file_name" =~ "Copie" ]]; then
+                            log "Dossier existant à mettre à jour : $file_name"
+                            add_to_array "$file_name" to_update
                         fi
                         ;;
                 esac
