@@ -130,6 +130,8 @@ clean_path() {
     path="${path#./}"
     # Supprimer les slashes en fin de chemin
     path="${path%/}"
+    # Supprimer les espaces au début et à la fin
+    path="$(echo "$path" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
     echo "$path"
 }
 
@@ -222,9 +224,9 @@ compare_folders() {
             log "Mode de comparaison: A vers B (sauvegarde)"
 
             # Première passe pour détecter les fichiers à créer et mettre à jour
-            log "Commande rsync (passe 1): rsync -navi --itemize-changes --delete \"$source_dir/\" \"$dest_dir/\""
+            log "Commande rsync (passe 1): rsync -navi --size-only --modify-window=1 --itemize-changes --delete \"$source_dir/\" \"$dest_dir/\""
             temp_file=$(mktemp)
-            rsync -navi --itemize-changes --delete "$source_dir/" "$dest_dir/" > "$temp_file" 2>&1
+            rsync -navi --size-only --modify-window=1 --itemize-changes --delete "$source_dir/" "$dest_dir/" | grep -v '^$\|^building\|^sending\|^sent\|^total\|^created\|^opening\|^receiving\|^received\|^generating\|^cd+++++' > "$temp_file"
             rsync_status=$?
 
             # Vérifier si rsync a réussi
@@ -237,7 +239,7 @@ compare_folders() {
             fi
 
             # Log de la sortie rsync
-            log "Sortie brute de rsync :"
+            log "Sortie filtrée de rsync :"
             while IFS= read -r line; do
                 log "  $line"
             done < "$temp_file"
@@ -246,59 +248,47 @@ compare_folders() {
 
             # Lire le fichier temporaire ligne par ligne
             while IFS= read -r line; do
-                # Ignorer les lignes vides ou de métadonnées
-                [[ -z "$line" ]] && continue
-                [[ "$line" =~ ^building ]] && continue
-                [[ "$line" =~ ^sending ]] && continue
-                [[ "$line" =~ ^sent ]] && continue
-                [[ "$line" =~ ^total ]] && continue
-                [[ "$line" =~ ^created ]] && continue
-                [[ "$line" =~ ^opening ]] && continue
-                [[ "$line" =~ ^receiving ]] && continue
-                [[ "$line" =~ ^received ]] && continue
-                [[ "$line" =~ ^generating ]] && continue
-                [[ "$line" =~ ^cd\+\+\+\+\+\+ ]] && continue
+                # Extraire les informations de changement (11 premiers caractères) et le nom du fichier
+                change_info=${line:0:11}
+                file_name=$(echo "$line" | cut -c12- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
-                # Vérifier que la ligne a le bon format (au moins 11 caractères)
-                if [[ ${#line} -lt 11 ]]; then
-                    log "Ligne ignorée (trop courte) : $line"
-                    continue
-                fi
-
-                # Extraire le type de changement et le nom du fichier
-                change_info=${line:0:11}  # Les 11 premiers caractères contiennent l'info de changement
-                file_name=${line:12}      # Le reste est le nom du fichier
-
-                # Analyser les caractères de changement
+                # Extraire le premier caractère (type de changement) et le second (type de fichier)
                 first_char=${change_info:0:1}
                 second_char=${change_info:1:1}
+                update_flags=${change_info:3:6}  # Les flags de mise à jour (positions 4-9)
 
-                log "Analyse détaillée: first_char='$first_char' second_char='$second_char' file='$file_name'"
+                log "Ligne analysée: [$first_char$second_char] [$update_flags] [$file_name]"
 
-                # Traitement basé sur les caractères de changement
+                # Ignorer les lignes vides ou non pertinentes
+                [[ -z "$file_name" ]] && continue
+
+                # Traitement en fonction du type de changement
                 case "$first_char" in
                     ">")
-                        # Nouveau fichier/dossier
-                        log "Nouveau fichier/dossier à créer : $file_name"
-                        add_to_array "$file_name" to_create
+                        # Nouveau fichier ou dossier
+                        if [[ "$second_char" == "f" ]]; then
+                            log "Nouveau fichier à créer : $file_name"
+                            add_to_array "$file_name" to_create
+                        elif [[ "$second_char" == "d" && "$file_name" =~ "Copie" ]]; then
+                            log "Nouveau dossier copié à créer : $file_name"
+                            add_to_array "$file_name" to_create
+                        fi
                         ;;
-                    "c" | "<")
-                        # Fichier/dossier modifié
-                        log "Fichier/dossier à mettre à jour : $file_name"
-                        add_to_array "$file_name" to_update
+                    "c"|".")
+                        # Fichier ou dossier modifié ou existant
+                        if [[ "$second_char" == "d" && ! "$file_name" =~ "Copie" ]]; then
+                            log "Dossier existant à mettre à jour : $file_name"
+                            add_to_array "$file_name" to_update
+                        elif [[ "$second_char" == "f" ]]; then
+                            log "Fichier existant à mettre à jour : $file_name"
+                            add_to_array "$file_name" to_update
+                        fi
                         ;;
                     "*")
-                        # Fichier/dossier à supprimer
-                        log "Fichier/dossier à supprimer : $file_name"
-                        add_to_array "$file_name" to_delete
-                        ;;
-                    ".")
-                        # Fichier/dossier existant, vérifier s'il y a des changements
-                        if [[ ${change_info:3:1} != "." || ${change_info:4:1} != "." || ${change_info:5:1} != "." ]]; then
-                            log "Fichier/dossier existant à mettre à jour (changements détectés) : $file_name"
-                            add_to_array "$file_name" to_update
-                        else
-                            log "Fichier/dossier existant sans changement : $file_name"
+                        # Fichier ou dossier à supprimer
+                        if [[ "$second_char" == "f" || "$second_char" == "d" ]]; then
+                            log "Fichier/dossier à supprimer : $file_name"
+                            add_to_array "$file_name" to_delete
                         fi
                         ;;
                 esac
