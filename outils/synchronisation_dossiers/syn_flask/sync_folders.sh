@@ -266,11 +266,8 @@ compare_folders() {
                 case "$first_char" in
                     ">")
                         # Nouveau fichier ou dossier
-                        if [[ "$second_char" == "f" ]]; then
-                            log "Nouveau fichier à créer : $file_name"
-                            add_to_array "$file_name" to_create
-                        elif [[ "$second_char" == "d" && "$file_name" =~ "Copie" ]]; then
-                            log "Nouveau dossier copié à créer : $file_name"
+                        if [[ "$second_char" == "f" || ("$second_char" == "d" && "$file_name" =~ "Copie") ]]; then
+                            log "Nouveau fichier/dossier à créer : $file_name"
                             add_to_array "$file_name" to_create
                         fi
                         ;;
@@ -280,8 +277,13 @@ compare_folders() {
                             log "Dossier existant à mettre à jour : $file_name"
                             add_to_array "$file_name" to_update
                         elif [[ "$second_char" == "f" ]]; then
-                            log "Fichier existant à mettre à jour : $file_name"
-                            add_to_array "$file_name" to_update
+                            if [[ "$file_name" == "sync_manifest.json" ]]; then
+                                log "Fichier manifest à créer : $file_name"
+                                add_to_array "$file_name" to_create
+                            else
+                                log "Fichier existant à mettre à jour : $file_name"
+                                add_to_array "$file_name" to_update
+                            fi
                         fi
                         ;;
                     "*")
