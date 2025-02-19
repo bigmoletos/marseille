@@ -75,30 +75,41 @@ count_total_files() {
     echo $count
 }
 
-# Vérification de la présence de rsync
-check_rsync() {
-    if command -v rsync &> /dev/null; then
-        log "Utilisation de rsync système"
-        return 0
-    else
-        log "rsync n'est pas trouvé, tentative d'installation..."
+# Fonction pour vérifier les dépendances
+check_dependencies() {
+    local output_file="$1"
+    local missing_deps=()
+
+    # Vérifier rsync
+    if ! command -v rsync &> /dev/null; then
+        missing_deps+=("rsync")
+    fi
+
+    # Vérifier jq
+    if ! command -v jq &> /dev/null; then
+        missing_deps+=("jq")
+    fi
+
+    if [ ${#missing_deps[@]} -gt 0 ]; then
+        log "Installation des dépendances manquantes : ${missing_deps[*]}"
         if command -v apt-get &> /dev/null; then
-            log "Installation de rsync via apt-get..."
-            sudo apt-get update && sudo apt-get install -y rsync
+            log "Installation via apt-get..."
+            sudo apt-get update && sudo apt-get install -y "${missing_deps[@]}"
             if [ $? -eq 0 ]; then
-                log "rsync installé avec succès"
+                log "Dépendances installées avec succès"
                 return 0
             else
-                log "ERREUR: Impossible d'installer rsync via apt-get"
-                echo '{"error": "Impossible d installer rsync"}' > "$1"
+                log "ERREUR: Impossible d'installer les dépendances"
+                echo "{\"error\": \"Impossible d installer les dépendances\"}" > "$output_file"
                 return 1
             fi
         else
             log "ERREUR: apt-get n'est pas disponible"
-            echo '{"error": "apt-get n est pas disponible pour installer rsync"}' > "$1"
+            echo "{\"error\": \"apt-get n est pas disponible pour installer les dépendances\"}" > "$output_file"
             return 1
         fi
     fi
+    return 0
 }
 
 # Fonction pour afficher le contenu d'un tableau
@@ -174,6 +185,149 @@ add_to_array() {
     fi
 }
 
+# Fonction pour générer un JSON d'un dossier
+generate_folder_json() {
+    local dir="$1"
+    local temp_json=$(mktemp)
+    local folders=()
+    local files=()
+
+    # Parcourir le dossier
+    while IFS= read -r -d '' entry; do
+        if [ -d "$entry" ]; then
+            # C'est un dossier
+            local folder_name=$(basename "$entry")
+            local folder_date=$(date -r "$entry" +%Y%m%d%H%M%S)
+            # Échapper les caractères spéciaux dans le nom du dossier
+            folder_name=$(echo "$folder_name" | sed 's/"/\\"/g')
+            folders+=("{\"name\":\"$folder_name\",\"date\":\"$folder_date\"}")
+        elif [ -f "$entry" ]; then
+            # C'est un fichier
+            local file_name=$(basename "$entry")
+            local file_date=$(date -r "$entry" +%Y%m%d%H%M%S)
+            local file_size=$(stat -c%s "$entry")
+            # Échapper les caractères spéciaux dans le nom du fichier
+            file_name=$(echo "$file_name" | sed 's/"/\\"/g')
+            files+=("{\"name\":\"$file_name\",\"date\":\"$file_date\",\"size\":\"$file_size\"}")
+        fi
+    done < <(find "$dir" -mindepth 1 -maxdepth 1 -print0)
+
+    # Créer le JSON final avec des séparateurs de tableau corrects
+    local folders_json=$(IFS=,; echo "${folders[*]}")
+    local files_json=$(IFS=,; echo "${files[*]}")
+    echo "{\"folders\":[$folders_json],\"files\":[$files_json]}" > "$temp_json"
+    echo "$temp_json"
+}
+
+# Fonction pour comparer deux JSON et générer les listes
+compare_json_folders() {
+    local source_json="$1"
+    local dest_json="$2"
+
+    # Réinitialiser les compteurs et les tableaux
+    declare -g nombre_to_create=0
+    declare -g nombre_to_update=0
+    declare -g nombre_to_delete=0
+    declare -g nombre_to_bidirectionnel=0
+
+    # Vider les tableaux globaux
+    to_create=()
+    to_update=()
+    to_delete=()
+
+    # Comparer les dossiers
+    local source_folders=$(jq -r '.folders[].name' "$source_json")
+    local dest_folders=$(jq -r '.folders[].name' "$dest_json")
+
+    # Dossiers à créer (dans source mais pas dans dest)
+    while IFS= read -r folder; do
+        if [[ ! " ${dest_folders[@]} " =~ " ${folder} " ]]; then
+            if [[ "$folder" =~ "Copie" ]]; then
+                add_to_array "$folder" to_create
+                ((nombre_to_create++))
+            else
+                # Vérifier que le dossier n'est pas déjà dans to_delete
+                if [[ ! " ${to_delete[@]} " =~ " ${folder} " ]]; then
+                    add_to_array "$folder" to_update
+                    ((nombre_to_update++))
+                fi
+            fi
+        else
+            # Vérifier la date
+            local source_date=$(jq -r ".folders[] | select(.name==\"$folder\") | .date" "$source_json")
+            local dest_date=$(jq -r ".folders[] | select(.name==\"$folder\") | .date" "$dest_json")
+            if [[ "${source_date//\"/}" != "${dest_date//\"/}" ]]; then
+                if [[ "$folder" =~ "Copie" ]]; then
+                    add_to_array "$folder" to_create
+                    ((nombre_to_create++))
+                else
+                    # Vérifier que le dossier n'est pas déjà dans to_delete
+                    if [[ ! " ${to_delete[@]} " =~ " ${folder} " ]]; then
+                        add_to_array "$folder" to_update
+                        ((nombre_to_update++))
+                    fi
+                fi
+            fi
+        fi
+    done <<< "$source_folders"
+
+    # Dossiers à supprimer (dans dest mais pas dans source)
+    while IFS= read -r folder; do
+        if [[ ! " ${source_folders[@]} " =~ " ${folder} " ]]; then
+            # Vérifier que le dossier n'est pas déjà dans to_create ou to_update
+            if [[ ! " ${to_create[@]} " =~ " ${folder} " ]] && [[ ! " ${to_update[@]} " =~ " ${folder} " ]]; then
+                add_to_array "$folder" to_delete
+                ((nombre_to_delete++))
+            fi
+        fi
+    done <<< "$dest_folders"
+
+    # Comparer les fichiers
+    local source_files=$(jq -r '.files[].name' "$source_json")
+    local dest_files=$(jq -r '.files[].name' "$dest_json")
+
+    # Fichiers à créer (dans source mais pas dans dest)
+    while IFS= read -r file; do
+        if [[ ! " ${dest_files[@]} " =~ " ${file} " ]]; then
+            # Vérifier que le fichier n'est pas déjà dans to_delete
+            if [[ ! " ${to_delete[@]} " =~ " ${file} " ]]; then
+                add_to_array "$file" to_create
+                ((nombre_to_create++))
+            fi
+        else
+            # Vérifier la taille et la date
+            local source_size=$(jq -r ".files[] | select(.name==\"$file\") | .size" "$source_json")
+            local dest_size=$(jq -r ".files[] | select(.name==\"$file\") | .size" "$dest_json")
+            local source_date=$(jq -r ".files[] | select(.name==\"$file\") | .date" "$source_json")
+            local dest_date=$(jq -r ".files[] | select(.name==\"$file\") | .date" "$dest_json")
+
+            if [[ "${source_size//\"/}" != "${dest_size//\"/}" ]] || [[ "${source_date//\"/}" != "${dest_date//\"/}" ]]; then
+                # Vérifier que le fichier n'est pas déjà dans to_delete
+                if [[ ! " ${to_delete[@]} " =~ " ${file} " ]]; then
+                    if [[ "$file" == "sync_manifest.json" ]]; then
+                        add_to_array "$file" to_create
+                        ((nombre_to_create++))
+                    else
+                        add_to_array "$file" to_update
+                        ((nombre_to_update++))
+                    fi
+                fi
+            fi
+        fi
+    done <<< "$source_files"
+
+    # Fichiers à supprimer (dans dest mais pas dans source)
+    while IFS= read -r file; do
+        if [[ ! " ${source_files[@]} " =~ " ${file} " ]]; then
+            # Vérifier que le fichier n'est pas déjà dans to_create ou to_update
+            if [[ ! " ${to_create[@]} " =~ " ${file} " ]] && [[ ! " ${to_update[@]} " =~ " ${file} " ]]; then
+                add_to_array "$file" to_delete
+                ((nombre_to_delete++))
+            fi
+        fi
+    done <<< "$dest_files"
+}
+
 # Fonction pour comparer les dossiers
 compare_folders() {
     local source_dir=$(convert_path "$1")
@@ -187,8 +341,8 @@ compare_folders() {
     log "Destination: $2 -> $dest_dir"
     log "Fichier de sortie: $4 -> $output_file"
 
-    # Vérification de rsync
-    check_rsync "$output_file" || return 1
+    # Vérification des dépendances
+    check_dependencies "$output_file" || return 1
 
     # Vérification des dossiers
     if [ ! -e "$source_dir" ] || [ ! -e "$dest_dir" ]; then
@@ -223,95 +377,29 @@ compare_folders() {
         "A vers B")
             log "Mode de comparaison: A vers B (sauvegarde)"
 
-            # Utiliser rsync en mode dry-run pour comparer les fichiers
-            # -n : dry-run (simulation)
-            # -r : récursif (nécessaire pour --delete)
-            # -i : mode itemize-changes détaillé
-            # --size-only : compare uniquement les tailles
-            # --modify-window=1 : tolère une différence d'une seconde
-            log "Commande rsync: rsync -nri --size-only --modify-window=1 --delete \"$source_dir/\" \"$dest_dir/\""
-            temp_file=$(mktemp)
-            rsync -nri --size-only --modify-window=1 --delete "$source_dir/" "$dest_dir/" | \
-                grep -v '^$\|^building\|^sending\|^sent\|^total\|^created\|^opening\|^receiving\|^received\|^generating\|^cd+++++' > "$temp_file"
-            rsync_status=$?
+            # Générer les JSON pour les deux dossiers
+            source_json=$(generate_folder_json "$source_dir")
+            dest_json=$(generate_folder_json "$dest_dir")
 
-            if [ $rsync_status -ne 0 ]; then
-                log "ERREUR: rsync a échoué avec le code $rsync_status"
-                log "Sortie d'erreur: $(cat "$temp_file")"
-                rm "$temp_file"
-                echo '{"error": "rsync a échoué"}' > "$output_file"
-                return 1
-            fi
+            # Comparer les dossiers
+            compare_json_folders "$source_json" "$dest_json"
 
-            # Log de la sortie rsync
-            log "Sortie filtrée de rsync :"
-            while IFS= read -r line; do
-                log "  $line"
-            done < "$temp_file"
+            # Créer le JSON de résultat
+            {
+                echo -n "{"
+                echo -n "\"to_create\": $(array_to_json "${to_create[@]}"),"
+                echo -n "\"to_update\": $(array_to_json "${to_update[@]}"),"
+                echo -n "\"to_delete\": $(array_to_json "${to_delete[@]}"),"
+                echo -n "\"to_bidirectionnel\": [],"
+                echo -n "\"nombre_to_create\": $nombre_to_create,"
+                echo -n "\"nombre_to_update\": $nombre_to_update,"
+                echo -n "\"nombre_to_delete\": $nombre_to_delete,"
+                echo -n "\"nombre_to_bidirectionnel\": 0,"
+                echo "\"error\": null}"
+            } > "$output_file"
 
-            log "Analyse des différences..."
-
-            # Lire le fichier temporaire ligne par ligne
-            while IFS= read -r line; do
-                # Extraire les informations de changement (11 premiers caractères) et le nom du fichier
-                change_info=${line:0:11}
-                file_name=$(echo "$line" | cut -c12- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-
-                # Ignorer les lignes vides
-                [[ -z "$file_name" ]] && continue
-
-                # Extraire les caractères de changement
-                first_char=${change_info:0:1}    # Type de changement principal
-                second_char=${change_info:1:1}   # Type de fichier (f=file, d=directory)
-
-                log "Analyse: [$first_char$second_char] [$file_name]"
-
-                case "$first_char" in
-                    ">")
-                        # Nouveau fichier/dossier (présent dans A, absent dans B)
-                        if [[ "$second_char" == "d" && "$file_name" =~ "Copie" ]] || \
-                           [[ "$file_name" == "sync.log" ]] || \
-                           [[ "$file_name" == "sync_manifest.json" ]]; then
-                            log "Nouveau fichier/dossier à créer : $file_name"
-                            add_to_array "$file_name" to_create
-                        elif [[ "$second_char" == "d" && ! "$file_name" =~ "Copie" ]]; then
-                            log "Dossier existant à mettre à jour : $file_name"
-                            add_to_array "$file_name" to_update
-                        fi
-                        ;;
-                    "*")
-                        # Fichier/dossier à supprimer (absent dans A, présent dans B)
-                        log "Fichier/dossier à supprimer : $file_name"
-                        add_to_array "$file_name" to_delete
-                        ;;
-                    "c")
-                        # Fichier/dossier modifié
-                        if [[ "$file_name" == "sync_manifest.json" ]]; then
-                            log "Fichier manifest à créer : $file_name"
-                            add_to_array "$file_name" to_create
-                        elif [[ "$second_char" == "d" && ! "$file_name" =~ "Copie" ]]; then
-                            log "Dossier existant à mettre à jour : $file_name"
-                            add_to_array "$file_name" to_update
-                        elif [[ "$second_char" == "f" ]]; then
-                            log "Fichier existant à mettre à jour : $file_name"
-                            add_to_array "$file_name" to_update
-                        fi
-                        ;;
-                    ".")
-                        # Fichier/dossier existant avec potentiels changements
-                        if [[ "$second_char" == "d" && "$file_name" =~ "Copie" ]]; then
-                            log "Dossier copié à créer : $file_name"
-                            add_to_array "$file_name" to_create
-                        elif [[ "$second_char" == "d" && ! "$file_name" =~ "Copie" ]]; then
-                            log "Dossier existant à mettre à jour : $file_name"
-                            add_to_array "$file_name" to_update
-                        fi
-                        ;;
-                esac
-            done < "$temp_file"
-
-            # Supprimer le fichier temporaire
-            rm "$temp_file"
+            # Nettoyer les fichiers temporaires
+            rm -f "$source_json" "$dest_json"
             ;;
 
         "B vers A")
@@ -458,16 +546,6 @@ compare_folders() {
             rm "$temp_file"
             ;;
     esac
-
-    # Création du JSON de résultat
-    {
-        echo -n "{"
-        echo -n "\"to_create\": $(array_to_json "${to_create[@]}"),"
-        echo -n "\"to_update\": $(array_to_json "${to_update[@]}"),"
-        echo -n "\"to_delete\": $(array_to_json "${to_delete[@]}"),"
-        echo -n "\"to_create_reverse\": $(array_to_json "${to_create_reverse[@]}"),"
-        echo "\"error\": null}"
-    } > "$output_file"
 
     # Log des résultats
     log "=== Résultats de la comparaison ==="
