@@ -1,5 +1,8 @@
 #!/bin/bash
-
+# ce fichier peut fonctionne seul en mode terminal sous wsl ou linux
+# Pour lancer le script, il faut se placer dans le dossier syn_flask et lancer le script avec la commande :
+# ./sync_folders.sh <mode> <chemin_source> <chemin_destination> <description> <nom_fichier_sortie>
+# exemple : bash -c 'bash ./sync_folders.sh compare "S:/sauve_dossier2" "S:/sauve_dossier3" "A vers B" "./output.json"'
 # Fonction pour convertir les chemins Windows en chemins Unix
 convert_path() {
     local path="$1"
