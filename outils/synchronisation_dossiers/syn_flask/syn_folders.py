@@ -706,29 +706,180 @@ def compare_folders(source_dir: str, dest_dir: str, mode: str,
         raise SyncError(error_msg)
 
 
-# Fonction pour synchroniser les dossiers
-def sync_folders(source_dir, dest_dir, mode):
-    source_dir = convert_path(source_dir)
-    dest_dir = convert_path(dest_dir)
-    log("=== DÉBUT DE LA SYNCHRONISATION ===")
-    log(f"Mode: {mode}")
-    log(f"Source: {source_dir}")
-    log(f"Destination: {dest_dir}")
+def sync_folders(source_dir, dest_dir, mode, output_file="sync_results.json"):
+    """
+    Synchronise deux dossiers selon le mode spécifié.
 
-    if mode == "A vers B":
-        log("Synchronisation A vers B")
-        subprocess.run(
-            ['rsync', '-av', '--delete', f"{source_dir}/", f"{dest_dir}/"])
-    elif mode == "B vers A":
-        log("Synchronisation B vers A")
-        subprocess.run(
-            ['rsync', '-av', '--delete', f"{dest_dir}/", f"{source_dir}/"])
-    elif mode == "A idem B":
-        log("Synchronisation bidirectionnelle")
-        subprocess.run(['rsync', '-av', f"{source_dir}/", f"{dest_dir}/"])
-        subprocess.run(['rsync', '-av', f"{dest_dir}/", f"{source_dir}/"])
+    Args:
+        source_dir (str): Chemin du dossier source
+        dest_dir (str): Chemin du dossier destination
+        mode (str): Mode de synchronisation ('A vers B', 'B vers A', 'A idem B')
+        output_file (str, optional): Chemin du fichier de sortie JSON. Defaults to "sync_results.json".
+    """
+    try:
+        source_dir = convert_path(source_dir)
+        dest_dir = convert_path(dest_dir)
 
-    log("=== SYNCHRONISATION TERMINÉE ===")
+        log("=== DÉBUT DE LA SYNCHRONISATION ===")
+        log(f"Mode: {mode}")
+        log(f"Source: {source_dir}")
+        log(f"Destination: {dest_dir}")
+        log(f"Fichier de sortie: {output_file}")
+
+        # Faire une comparaison avant la synchronisation
+        compare_folders(source_dir, dest_dir, mode, output_file)
+
+        # Lire les résultats de la comparaison
+        with open(output_file, 'r', encoding='utf-8') as f:
+            comparison_results = json.load(f)
+
+        # Vérifier s'il y a eu une erreur lors de la comparaison
+        if comparison_results.get("error"):
+            raise SyncError(
+                f"Erreur lors de la comparaison: {comparison_results['error']}"
+            )
+
+        # Loguer les détails de la synchronisation
+        log(f"Fichiers à créer: {len(comparison_results['to_create'])}")
+        for item in comparison_results['to_create']:
+            log(f"  - Création: {item}")
+
+        log(f"Fichiers à mettre à jour: {len(comparison_results['to_update'])}"
+            )
+        for item in comparison_results['to_update']:
+            log(f"  - Mise à jour: {item}")
+
+        if mode != "A idem B":
+            log(f"Fichiers à supprimer: {len(comparison_results['to_delete'])}"
+                )
+            for item in comparison_results['to_delete']:
+                log(f"  - Suppression: {item}")
+
+        # Convertir les chemins pour rsync (remplacer S: par le chemin local)
+        def convert_for_rsync(path):
+            if path.startswith('S:'):
+                return path.replace('S:', '/cygdrive/s')
+            return path
+
+        source_rsync = convert_for_rsync(source_dir)
+        dest_rsync = convert_for_rsync(dest_dir)
+
+        log(f"Chemin source pour rsync: {source_rsync}")
+        log(f"Chemin destination pour rsync: {dest_rsync}")
+
+        # Exécuter la synchronisation selon le mode
+        try:
+            if mode == "A vers B":
+                log("Synchronisation A vers B")
+                result = subprocess.run([
+                    'rsync', '-av', '--delete', f"{source_rsync}/",
+                    f"{dest_rsync}/"
+                ],
+                                        capture_output=True,
+                                        text=True)
+            elif mode == "B vers A":
+                log("Synchronisation B vers A")
+                result = subprocess.run([
+                    'rsync', '-av', '--delete', f"{dest_rsync}/",
+                    f"{source_rsync}/"
+                ],
+                                        capture_output=True,
+                                        text=True)
+            elif mode == "A idem B":
+                log("Synchronisation bidirectionnelle")
+                result_ab = subprocess.run(
+                    ['rsync', '-av', f"{source_rsync}/", f"{dest_rsync}/"],
+                    capture_output=True,
+                    text=True)
+                result_ba = subprocess.run(
+                    ['rsync', '-av', f"{dest_rsync}/", f"{source_rsync}/"],
+                    capture_output=True,
+                    text=True)
+
+                # Vérifier les résultats des deux synchronisations
+                if result_ab.returncode != 0:
+                    log(f"ERREUR lors de la synchronisation A vers B: {result_ab.stderr}"
+                        )
+                if result_ba.returncode != 0:
+                    log(f"ERREUR lors de la synchronisation B vers A: {result_ba.stderr}"
+                        )
+
+                # Combiner les sorties pour le log
+                result = result_ab
+                if result_ba.stdout:
+                    result.stdout += "\n" + result_ba.stdout
+                if result_ba.stderr:
+                    result.stderr += "\n" + result_ba.stderr
+                result.returncode = result_ab.returncode or result_ba.returncode
+
+            # Vérifier le résultat de la synchronisation
+            if result.returncode != 0:
+                raise SyncError(
+                    f"rsync a échoué avec le code {result.returncode}: {result.stderr}"
+                )
+
+            # Loguer les détails de l'exécution
+            if result.stdout:
+                log("Détails de la synchronisation:")
+                for line in result.stdout.splitlines():
+                    log(f"  {line}")
+
+            # Sauvegarder les résultats dans un fichier JSON
+            sync_results = {
+                "status": "success",
+                "mode": mode,
+                "source": source_dir,
+                "destination": dest_dir,
+                "source_rsync": source_rsync,
+                "dest_rsync": dest_rsync,
+                "comparison": comparison_results,
+                "timestamp":
+                datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                "details": {
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "return_code": result.returncode
+                }
+            }
+
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(sync_results, f, indent=2)
+
+            log(f"Résultats de la synchronisation sauvegardés dans {output_file}"
+                )
+            log("=== SYNCHRONISATION TERMINÉE AVEC SUCCÈS ===")
+
+        except subprocess.CalledProcessError as e:
+            error_msg = f"Erreur lors de l'exécution de rsync: {str(e)}"
+            log(f"ERREUR: {error_msg}")
+            raise SyncError(error_msg)
+
+    except Exception as e:
+        error_msg = f"Erreur lors de la synchronisation: {str(e)}"
+        log(f"ERREUR: {error_msg}")
+
+        # Sauvegarder l'erreur dans le fichier JSON
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(
+                {
+                    "status":
+                    "error",
+                    "mode":
+                    mode,
+                    "source":
+                    source_dir,
+                    "destination":
+                    dest_dir,
+                    "error":
+                    error_msg,
+                    "timestamp":
+                    datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                },
+                f,
+                indent=2)
+
+        log("=== SYNCHRONISATION TERMINÉE AVEC ERREUR ===")
+        raise SyncError(error_msg)
 
 
 # Point d'entrée principal
@@ -739,19 +890,52 @@ if __name__ == "__main__":
         sys.exit(1)
 
     command = sys.argv[1]
+
+    # Fichiers de sortie par défaut
+    default_compare_output = "output_comparison.json"
+    default_sync_output = "sync_results.json"
+
     if command == "compare":
-        if len(sys.argv) != 6:
+        if len(sys.argv) == 5:
+            # Sans fichier de sortie spécifié
+            source_dir = sys.argv[2]
+            dest_dir = sys.argv[3]
+            mode = sys.argv[4]
+            output_file = default_compare_output
+        elif len(sys.argv) == 6:
+            # Avec fichier de sortie spécifié
+            source_dir = sys.argv[2]
+            dest_dir = sys.argv[3]
+            mode = sys.argv[4]
+            output_file = sys.argv[5]
+        else:
             print(
-                "Usage: python script.py compare <source_dir> <dest_dir> <mode> <output_file>"
+                "Usage: python script.py compare <source_dir> <dest_dir> <mode> [output_file]"
             )
             sys.exit(1)
-        compare_folders(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+
+        compare_folders(source_dir, dest_dir, mode, output_file)
+
     elif command == "sync":
-        if len(sys.argv) != 5:
+        if len(sys.argv) == 5:
+            # Sans fichier de sortie spécifié
+            source_dir = sys.argv[2]
+            dest_dir = sys.argv[3]
+            mode = sys.argv[4]
+            output_file = default_sync_output
+        elif len(sys.argv) == 6:
+            # Avec fichier de sortie spécifié
+            source_dir = sys.argv[2]
+            dest_dir = sys.argv[3]
+            mode = sys.argv[4]
+            output_file = sys.argv[5]
+        else:
             print(
-                "Usage: python script.py sync <source_dir> <dest_dir> <mode>")
+                "Usage: python script.py sync <source_dir> <dest_dir> <mode> [output_file]"
+            )
             sys.exit(1)
-        sync_folders(sys.argv[2], sys.argv[3], sys.argv[4])
+
+        sync_folders(source_dir, dest_dir, mode, output_file)
     else:
         print("Usage: python script.py {compare|sync} [arguments]")
         sys.exit(1)
