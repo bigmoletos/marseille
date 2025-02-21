@@ -193,9 +193,6 @@ def perform_sync(source_dir: str, dest_dir: str, mode: str) -> None:
         dest_dir (str): Chemin du dossier destination
         mode (str): Mode de synchronisation
     """
-    # Dossiers à ignorer
-    IGNORED_DIRS = {'.git', '__pycache__', '.idea', '.vscode', 'node_modules'}
-
     try:
         # Générer les JSON des dossiers
         source_json = generate_folder_json(source_dir)
@@ -206,112 +203,54 @@ def perform_sync(source_dir: str, dest_dir: str, mode: str) -> None:
 
         # Créer les dossiers manquants et copier les fichiers
         for item in syn_folders_to_container.to_create + syn_folders_to_container.to_update:
-            # Ignorer les dossiers système
-            if any(ignored in item for ignored in IGNORED_DIRS):
-                logger.info(f"Dossier ignoré: {item}")
-                continue
-
             source_path = os.path.join(source_dir, item)
             dest_path = os.path.join(dest_dir, item)
 
-            try:
-                # Si c'est un dossier
-                if os.path.isdir(source_path):
-                    if not os.path.exists(dest_path):
-                        os.makedirs(dest_path, exist_ok=True)
-                        logger.info(f"Dossier créé: {item}")
-                    # Copier tout le contenu du dossier
-                    for root, dirs, files in os.walk(source_path):
-                        # Filtrer les dossiers à ignorer
-                        dirs[:] = [d for d in dirs if d not in IGNORED_DIRS]
-
-                        # Créer les sous-dossiers dans la destination
-                        for d in dirs:
-                            try:
-                                src_dir = os.path.join(root, d)
-                                dst_dir = os.path.join(
-                                    dest_path,
-                                    os.path.relpath(src_dir, source_path))
-                                os.makedirs(dst_dir, exist_ok=True)
-                                logger.info(
-                                    f"Sous-dossier créé: {os.path.relpath(dst_dir, dest_dir)}"
-                                )
-                            except PermissionError:
-                                logger.warning(
-                                    f"Permission refusée pour le dossier: {d}")
-                                continue
-
-                        # Copier les fichiers
-                        for f in files:
-                            try:
-                                src_file = os.path.join(root, f)
-                                dst_file = os.path.join(
-                                    dest_path,
-                                    os.path.relpath(src_file, source_path))
-                                os.makedirs(os.path.dirname(dst_file),
-                                            exist_ok=True)
-                                shutil.copy2(src_file, dst_file)
-                                logger.info(
-                                    f"Fichier copié: {os.path.relpath(dst_file, dest_dir)}"
-                                )
-                            except PermissionError:
-                                logger.warning(
-                                    f"Permission refusée pour le fichier: {f}")
-                                continue
-                            except OSError as e:
-                                logger.warning(
-                                    f"Erreur lors de la copie du fichier {f}: {str(e)}"
-                                )
-                                continue
-
-                # Si c'est un fichier
-                elif os.path.isfile(source_path):
-                    try:
-                        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                        shutil.copy2(source_path, dest_path)
-                        logger.info(f"Fichier copié: {item}")
-                    except PermissionError:
-                        logger.warning(
-                            f"Permission refusée pour le fichier: {item}")
-                        continue
-                    except OSError as e:
-                        logger.warning(
-                            f"Erreur lors de la copie du fichier {item}: {str(e)}"
+            # Si c'est un dossier
+            if os.path.isdir(source_path):
+                if not os.path.exists(dest_path):
+                    os.makedirs(dest_path, exist_ok=True)
+                    logger.info(f"Dossier créé: {item}")
+                # Copier tout le contenu du dossier
+                for root, dirs, files in os.walk(source_path):
+                    # Créer les sous-dossiers dans la destination
+                    for d in dirs:
+                        src_dir = os.path.join(root, d)
+                        dst_dir = os.path.join(
+                            dest_path, os.path.relpath(src_dir, source_path))
+                        os.makedirs(dst_dir, exist_ok=True)
+                        logger.info(
+                            f"Sous-dossier créé: {os.path.relpath(dst_dir, dest_dir)}"
                         )
-                        continue
 
-            except PermissionError:
-                logger.warning(f"Permission refusée pour: {item}")
-                continue
-            except OSError as e:
-                logger.warning(f"Erreur lors de la copie de {item}: {str(e)}")
-                continue
+                    # Copier les fichiers
+                    for f in files:
+                        src_file = os.path.join(root, f)
+                        dst_file = os.path.join(
+                            dest_path, os.path.relpath(src_file, source_path))
+                        os.makedirs(os.path.dirname(dst_file), exist_ok=True)
+                        shutil.copy2(src_file, dst_file)
+                        logger.info(
+                            f"Fichier copié: {os.path.relpath(dst_file, dest_dir)}"
+                        )
+
+            # Si c'est un fichier
+            elif os.path.isfile(source_path):
+                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                shutil.copy2(source_path, dest_path)
+                logger.info(f"Fichier copié: {item}")
 
         # Supprimer les fichiers si nécessaire (sauf en mode bidirectionnel)
         if mode != "A idem B":
             for item in syn_folders_to_container.to_delete:
-                # Ignorer les dossiers système
-                if any(ignored in item for ignored in IGNORED_DIRS):
-                    logger.info(f"Dossier ignoré pour suppression: {item}")
-                    continue
-
                 path_to_delete = os.path.join(dest_dir, item)
-                try:
-                    if os.path.exists(path_to_delete):
-                        if os.path.isfile(path_to_delete):
-                            os.remove(path_to_delete)
-                            logger.info(f"Fichier supprimé: {item}")
-                        elif os.path.isdir(path_to_delete):
-                            shutil.rmtree(path_to_delete)
-                            logger.info(f"Dossier supprimé: {item}")
-                except PermissionError:
-                    logger.warning(
-                        f"Permission refusée pour la suppression de: {item}")
-                    continue
-                except OSError as e:
-                    logger.warning(
-                        f"Erreur lors de la suppression de {item}: {str(e)}")
-                    continue
+                if os.path.exists(path_to_delete):
+                    if os.path.isfile(path_to_delete):
+                        os.remove(path_to_delete)
+                        logger.info(f"Fichier supprimé: {item}")
+                    elif os.path.isdir(path_to_delete):
+                        shutil.rmtree(path_to_delete)
+                        logger.info(f"Dossier supprimé: {item}")
 
         logger.info(f"""
 Synchronisation terminée:
