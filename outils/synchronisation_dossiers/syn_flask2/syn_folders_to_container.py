@@ -98,15 +98,29 @@ def convert_path(path: str) -> str:
         OSError: Si une erreur système survient lors de la conversion
     """
     try:
+        # Si le chemin est déjà au format Git Bash, le retourner tel quel
+        if path.startswith('/'):
+            return path
+
         # Normaliser le chemin selon l'OS
         path = os.path.normpath(path)
 
         # Si nous sommes sous Windows
         if SYSTEM_INFO['os'] == 'windows':
             logger.debug(f"Conversion de chemin sous Windows: {path}")
-            # Gérer les chemins UNC et les lettres de lecteur
+
+            # Gérer les chemins réseau avec lettre de lecteur (ex: S:/)
+            if ':' in path:
+                drive_letter = path[0].lower()
+                path_normalized = path[2:].replace('\\', '/').lstrip('/')
+                return f"/mnt/{drive_letter}/{path_normalized}"
+
+            # Gérer les chemins UNC
             if path.startswith('\\\\'):
-                return path
+                clean_path = path[2:].replace('\\', '/')
+                return f"/mnt/{clean_path}"
+
+            # Chemin local Windows
             return os.path.abspath(path)
 
         # Si nous sommes sous Linux/Unix
@@ -116,18 +130,25 @@ def convert_path(path: str) -> str:
             # Si nous sommes sous WSL
             if SYSTEM_INFO['is_wsl']:
                 logger.debug("Détection de WSL - adaptation du chemin")
+
                 # Convertir les chemins Windows en chemins WSL
                 if ':' in path:  # C'est un chemin Windows
                     drive_letter = path[0].lower()
-        path = path[2:].replace('\\', '/')
-                    return f"/mnt/{drive_letter}{path}"
+                    path = path[2:].replace('\\', '/')
+                    return f"/mnt/{drive_letter}/{path.lstrip('/')}"
+
+                # Gérer les chemins UNC
+                if path.startswith('\\\\'):
+                    clean_path = path[2:].replace('\\', '/')
+                    return f"/mnt/{clean_path}"
+
                 return path
 
             # Linux natif
             return os.path.abspath(path).replace('\\', '/')
 
         # Pour les autres systèmes
-    else:
+        else:
             logger.warning(
                 f"Système d'exploitation non reconnu: {SYSTEM_INFO['os']}")
             return os.path.abspath(path).replace('\\', '/')
@@ -167,15 +188,15 @@ def log(message: str) -> None:
         message (str): Message à logger
     """
     try:
-    timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    log_message = f"[{timestamp}] {message}"
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        log_message = f"[{timestamp}] {message}"
 
         # Écriture dans le fichier de log
         with open('sync.log', 'a', encoding='utf-8') as log_file:
-        log_file.write(log_message + '\n')
+            log_file.write(log_message + '\n')
 
         # Affichage console
-    print(log_message)
+        print(log_message)
 
         # Utilisation du logger
         logger.info(message)
@@ -194,12 +215,12 @@ def show_progress(current: int, total: int, width: int = 50) -> None:
         width (int, optional): Largeur de la barre. Defaults to 50.
     """
     try:
-    progress = int(current * width / total)
-    percentage = int(current * 100 / total)
-    bar = f"[{'=' * progress}{' ' * (width - progress)}] {percentage}%"
-    message = f"{bar} ({current}/{total})"
+        progress = int(current * width / total)
+        percentage = int(current * 100 / total)
+        bar = f"[{'=' * progress}{' ' * (width - progress)}] {percentage}%"
+        message = f"{bar} ({current}/{total})"
         logger.info(message)
-    log(message)
+        log(message)
     except Exception as e:
         logger.error(f"Erreur lors de l'affichage de la progression: {str(e)}")
 
@@ -238,21 +259,21 @@ def check_dependencies() -> bool:
         bool: True si toutes les dépendances sont présentes, False sinon
     """
     try:
-    missing_deps = []
-    if shutil.which('rsync') is None:
-        missing_deps.append('rsync')
-    if shutil.which('jq') is None:
-        missing_deps.append('jq')
+        missing_deps = []
+        if shutil.which('rsync') is None:
+            missing_deps.append('rsync')
+        if shutil.which('jq') is None:
+            missing_deps.append('jq')
 
-    if missing_deps:
+        if missing_deps:
             logger.error(f"Dépendances manquantes : {', '.join(missing_deps)}")
-        log(f"Dépendances manquantes : {', '.join(missing_deps)}")
-        log("Veuillez installer les dépendances manquantes manuellement ou utiliser un gestionnaire de paquets comme Chocolatey."
-            )
-        return False
+            log(f"Dépendances manquantes : {', '.join(missing_deps)}")
+            log("Veuillez installer les dépendances manquantes manuellement ou utiliser un gestionnaire de paquets comme Chocolatey."
+                )
+            return False
 
         logger.info("Toutes les dépendances sont présentes")
-    return True
+        return True
     except Exception as e:
         logger.error(
             f"Erreur lors de la vérification des dépendances: {str(e)}")
@@ -269,10 +290,10 @@ def log_array(array_name: str, array_content: List[str]) -> None:
     """
     try:
         logger.info(f"Contenu du tableau {array_name}:")
-    log(f"Contenu du tableau {array_name}:")
-    for item in array_content:
+        log(f"Contenu du tableau {array_name}:")
+        for item in array_content:
             logger.info(f"  - {item}")
-        log(f"  - {item}")
+            log(f"  - {item}")
     except Exception as e:
         logger.error(
             f"Erreur lors de l'affichage du tableau {array_name}: {str(e)}")
@@ -290,12 +311,12 @@ def is_subpath(path: str, array: List[str]) -> bool:
         bool: True si le chemin est un sous-chemin, False sinon
     """
     try:
-    for item in array:
-        if path != item and path.startswith(item + '/'):
+        for item in array:
+            if path != item and path.startswith(item + '/'):
                 logger.debug(
                     f"Le chemin '{path}' est un sous-chemin de '{item}'")
-            return True
-    return False
+                return True
+        return False
     except Exception as e:
         logger.error(
             f"Erreur lors de la vérification du sous-chemin '{path}': {str(e)}"
@@ -315,14 +336,14 @@ def add_to_array(path: str, array: List[str]) -> None:
         ValueError: Si le chemin est invalide
     """
     try:
-    path = clean_path(path)
-    if not is_subpath(path, array):
+        path = clean_path(path)
+        if not is_subpath(path, array):
             # Supprime les chemins qui sont des sous-chemins du nouveau chemin
             array[:] = [
                 item for item in array if not item.startswith(path + '/')
             ]
-        if path not in array:
-            array.append(path)
+            if path not in array:
+                array.append(path)
                 logger.debug(f"Chemin '{path}' ajouté au tableau")
     except Exception as e:
         logger.error(
@@ -376,30 +397,30 @@ def generate_folder_json(dir_path: str) -> str:
     try:
         # Convertir et nettoyer le chemin
         dir_path = clean_path(dir_path)
-    folders = []
-    files = []
+        folders = []
+        files = []
 
         logger.info(f"Génération du JSON pour le dossier: {dir_path}")
 
-    for entry in Path(dir_path).iterdir():
+        for entry in Path(dir_path).iterdir():
             try:
                 # Utiliser seulement le nom du fichier/dossier
                 name = entry.name
 
-        if entry.is_dir():
-            folder_date = datetime.datetime.fromtimestamp(
-                entry.stat().st_mtime).strftime('%Y%m%d%H%M%S')
+                if entry.is_dir():
+                    folder_date = datetime.datetime.fromtimestamp(
+                        entry.stat().st_mtime).strftime('%Y%m%d%H%M%S')
                     folders.append({"name": name, "date": folder_date})
                     logger.debug(f"Dossier ajouté: {name}")
-        elif entry.is_file():
-            file_date = datetime.datetime.fromtimestamp(
-                entry.stat().st_mtime).strftime('%Y%m%d%H%M%S')
-            file_size = entry.stat().st_size
-            files.append({
+                elif entry.is_file():
+                    file_date = datetime.datetime.fromtimestamp(
+                        entry.stat().st_mtime).strftime('%Y%m%d%H%M%S')
+                    file_size = entry.stat().st_size
+                    files.append({
                         "name": name,
-                "date": file_date,
-                "size": file_size
-            })
+                        "date": file_date,
+                        "size": file_size
+                    })
                     logger.debug(f"Fichier ajouté: {name}")
             except Exception as e:
                 logger.warning(
@@ -457,77 +478,77 @@ def compare_json_folders(source_json: str, dest_json: str) -> None:
         dest_json (str): JSON du dossier destination
     """
     try:
-    global nombre_to_create, nombre_to_update, nombre_to_delete, nombre_to_bidirectionnel
-    nombre_to_create = nombre_to_update = nombre_to_delete = nombre_to_bidirectionnel = 0
-    global to_create, to_update, to_delete
-    to_create = []
-    to_update = []
-    to_delete = []
+        global nombre_to_create, nombre_to_update, nombre_to_delete, nombre_to_bidirectionnel
+        nombre_to_create = nombre_to_update = nombre_to_delete = nombre_to_bidirectionnel = 0
+        global to_create, to_update, to_delete
+        to_create = []
+        to_update = []
+        to_delete = []
 
-    source_data = json.loads(source_json)
-    dest_data = json.loads(dest_json)
+        source_data = json.loads(source_json)
+        dest_data = json.loads(dest_json)
 
-    source_folders = {
-        folder['name']: folder['date']
-        for folder in source_data['folders']
-    }
-    dest_folders = {
-        folder['name']: folder['date']
-        for folder in dest_data['folders']
-    }
+        source_folders = {
+            folder['name']: folder['date']
+            for folder in source_data['folders']
+        }
+        dest_folders = {
+            folder['name']: folder['date']
+            for folder in dest_data['folders']
+        }
 
         # Traitement des dossiers
-    for folder, source_date in source_folders.items():
-        if folder not in dest_folders:
-            if "Copie" in folder:
-                    to_create.append(folder)
-                nombre_to_create += 1
-            else:
-                    to_update.append(folder)
-                nombre_to_update += 1
-        else:
-            dest_date = dest_folders[folder]
-            if source_date != dest_date:
+        for folder, source_date in source_folders.items():
+            if folder not in dest_folders:
                 if "Copie" in folder:
-                        to_create.append(folder)
+                    to_create.append(folder)
                     nombre_to_create += 1
                 else:
-                        to_update.append(folder)
+                    to_update.append(folder)
                     nombre_to_update += 1
+            else:
+                dest_date = dest_folders[folder]
+                if source_date != dest_date:
+                    if "Copie" in folder:
+                        to_create.append(folder)
+                        nombre_to_create += 1
+                    else:
+                        to_update.append(folder)
+                        nombre_to_update += 1
 
-    for folder in dest_folders.keys():
-        if folder not in source_folders:
+        for folder in dest_folders.keys():
+            if folder not in source_folders:
                 to_delete.append(folder)
-            nombre_to_delete += 1
+                nombre_to_delete += 1
 
         # Traitement des fichiers
-    source_files = {
-        file['name']: (file['size'], file['date'])
-        for file in source_data['files']
-    }
-    dest_files = {
-        file['name']: (file['size'], file['date'])
-        for file in dest_data['files']
-    }
+        source_files = {
+            file['name']: (file['size'], file['date'])
+            for file in source_data['files']
+        }
+        dest_files = {
+            file['name']: (file['size'], file['date'])
+            for file in dest_data['files']
+        }
 
-    for file, (source_size, source_date) in source_files.items():
-        if file not in dest_files:
+        for file, (source_size, source_date) in source_files.items():
+            if file not in dest_files:
                 to_create.append(file)
-            nombre_to_create += 1
-        else:
-            dest_size, dest_date = dest_files[file]
-            if source_size != dest_size or source_date != dest_date:
-                if file == "sync_manifest.json":
+                nombre_to_create += 1
+            else:
+                dest_size, dest_date = dest_files[file]
+                if source_size != dest_size or source_date != dest_date:
+                    if file == "sync_manifest.json":
                         to_create.append(file)
-                    nombre_to_create += 1
-                else:
+                        nombre_to_create += 1
+                    else:
                         to_update.append(file)
-                    nombre_to_update += 1
+                        nombre_to_update += 1
 
-    for file in dest_files.keys():
-        if file not in source_files:
+        for file in dest_files.keys():
+            if file not in source_files:
                 to_delete.append(file)
-            nombre_to_delete += 1
+                nombre_to_delete += 1
 
         # Trier les listes pour une meilleure lisibilité
         to_create.sort()
@@ -543,7 +564,7 @@ def compare_json_folders(source_json: str, dest_json: str) -> None:
         raise
 
 
-def check_path(path: str, description: str) -> bool:
+def check_path(path: str, description: str) -> tuple[bool, str]:
     """
     Vérifie l'existence et l'accessibilité d'un chemin.
 
@@ -552,7 +573,9 @@ def check_path(path: str, description: str) -> bool:
         description (str): Description du chemin pour les messages d'erreur
 
     Returns:
-        bool: True si le chemin existe et est accessible, False sinon
+        tuple[bool, str]: (valide, message d'erreur)
+            - valide: True si le chemin existe et est accessible
+            - message d'erreur: Message explicatif si non valide, chaîne vide si valide
     """
     try:
         # Convertir le chemin selon l'OS
@@ -560,34 +583,38 @@ def check_path(path: str, description: str) -> bool:
 
         # Vérifier l'existence
         if not os.path.exists(path):
-            logger.error(f"ERREUR: {description} n'existe pas: {path}")
+            error_msg = f"ERREUR: {description} n'existe pas: {path}"
+            logger.error(error_msg)
             logger.error(
                 "Veuillez vérifier que le chemin est correct et accessible")
-            return False
+            return False, error_msg
 
         # Vérifier les permissions de lecture
         if not os.access(path, os.R_OK):
-            logger.error(
-                f"ERREUR: {description} n'est pas accessible en lecture: {path}"
-            )
-            return False
+            error_msg = f"ERREUR: {description} n'est pas accessible en lecture: {path}"
+            logger.error(error_msg)
+            return False, error_msg
 
         # Vérifier si c'est un dossier
         if not os.path.isdir(path):
-            logger.error(f"ERREUR: {description} n'est pas un dossier: {path}")
-            return False
+            error_msg = f"ERREUR: {description} n'est pas un dossier: {path}"
+            logger.error(error_msg)
+            return False, error_msg
 
         logger.debug(f"Chemin {description} vérifié avec succès: {path}")
-        return True
+        return True, ""
 
     except Exception as e:
-        logger.error(
-            f"ERREUR lors de la vérification de {description}: {str(e)}")
-        return False
+        error_msg = f"ERREUR lors de la vérification de {description}: {str(e)}"
+        logger.error(error_msg)
+        return False, error_msg
 
 
-def compare_folders(source_dir: str, dest_dir: str, mode: str,
-                    output_file: str) -> None:
+def compare_folders(source_dir: str,
+                    dest_dir: str,
+                    mode: str,
+                    output_file: str,
+                    script_path: str = None) -> None:
     """
     Compare deux dossiers et génère un fichier JSON avec les différences.
 
@@ -596,14 +623,12 @@ def compare_folders(source_dir: str, dest_dir: str, mode: str,
         dest_dir (str): Chemin du dossier destination
         mode (str): Mode de comparaison ('A vers B', 'B vers A', 'A idem B')
         output_file (str): Chemin du fichier de sortie JSON
+        script_path (str, optional): Chemin du script bash. Si None, utilise le script au même niveau.
 
     Raises:
         SyncError: Si une erreur survient pendant la comparaison
     """
     try:
-        global to_create, to_update, to_delete
-        global nombre_to_create, nombre_to_update, nombre_to_delete, nombre_to_bidirectionnel
-
         logger.info("=== DÉBUT DE LA COMPARAISON ===")
         logger.info(f"Mode: {mode}")
         logger.info(f"Source: {source_dir}")
@@ -615,85 +640,67 @@ def compare_folders(source_dir: str, dest_dir: str, mode: str,
             raise SyncError("Impossible d'installer les dépendances")
 
         # Convertir et vérifier les chemins
-    source_dir = convert_path(source_dir)
-    dest_dir = convert_path(dest_dir)
+        source_dir = convert_path(source_dir)
+        dest_dir = convert_path(dest_dir)
+        output_file = convert_path(output_file)
 
-    if not check_path(source_dir, "Source") or not check_path(
-            dest_dir, "Destination"):
+        if not check_path(source_dir, "Source") or not check_path(
+                dest_dir, "Destination"):
             raise SyncError(
                 "Un des dossiers n'existe pas ou n'est pas accessible")
 
-        # Générer les JSON
-        source_json = generate_folder_json(source_dir)
-        dest_json = generate_folder_json(dest_dir)
+        # Utiliser le script bash au même niveau que ce fichier si non spécifié
+        if script_path is None:
+            script_path = os.path.join(os.path.dirname(__file__),
+                                       "sync_folders.sh")
 
-        # Initialiser les variables globales
-        to_create = []
-        to_update = []
-        to_delete = []
-        nombre_to_create = nombre_to_update = nombre_to_delete = nombre_to_bidirectionnel = 0
+        script_path = convert_path(script_path)
+        script_dir = os.path.dirname(script_path)
 
-        # Comparer les dossiers selon le mode
-        if mode == "A vers B":
-            logger.info("Mode de comparaison: A vers B (sauvegarde)")
-            compare_json_folders(source_json, dest_json)
-        elif mode == "B vers A":
-            logger.info("Mode de comparaison: B vers A (restauration)")
-            compare_json_folders(dest_json, source_json)
-        elif mode == "A idem B":
-            logger.info("Mode de comparaison: A idem B (miroir)")
-            # Comparer dans les deux sens
-        compare_json_folders(source_json, dest_json)
+        # Vérifier que le script existe
+        if not os.path.isfile(script_path):
+            raise SyncError(f"Le script {script_path} n'existe pas")
 
-            # Sauvegarder les résultats temporaires de A vers B
-            to_create_a_to_b = to_create.copy()
-            to_update_a_to_b = to_update.copy()
+        # Rendre le script exécutable
+        try:
+            os.chmod(script_path, 0o755)
+            logger.info(f"Script {script_path} rendu exécutable")
+        except Exception as e:
+            logger.error(f"Erreur lors du chmod +x: {str(e)}")
+            raise
 
-            # Réinitialiser les listes pour la comparaison B vers A
-            to_create = []
-            to_update = []
-            to_delete = []
+        # Exécuter le script bash pour la comparaison
+        script_name = os.path.basename(script_path)
 
-            # Comparer dans l'autre sens (B vers A)
-            compare_json_folders(dest_json, source_json)
+        # Construire la commande avec les chemins convertis
+        cmd = f'cd "{script_dir}" && chmod +x "{script_name}" && ./{script_name} compare "{source_dir}" "{dest_dir}" "{mode}" "{output_file}"'
+        logger.info(f"Commande à exécuter: {cmd}")
 
-            # Fusionner uniquement les créations et mises à jour
-            to_create.extend(to_create_a_to_b)
-            to_update.extend(to_update_a_to_b)
+        # Exécuter la commande
+        env = os.environ.copy()
+        env["PATH"] = "/usr/bin:" + env.get("PATH", "")
 
-            # Vider la liste des suppressions car pas de suppression en mode A idem B
-            to_delete = []
+        result = subprocess.run(cmd,
+                                shell=True,
+                                capture_output=True,
+                                text=True,
+                                env=env)
 
-            # Supprimer les doublons et trier
-            to_create = sorted(list(set(to_create)))
-            to_update = sorted(list(set(to_update)))
+        # Afficher la sortie standard et d'erreur pour le débogage
+        if result.stdout:
+            logger.info(f"Sortie standard:\n{result.stdout}")
+        if result.stderr:
+            logger.error(f"Sortie d'erreur:\n{result.stderr}")
 
-            # Mettre à jour les compteurs
-            nombre_to_create = len(to_create)
-            nombre_to_update = len(to_update)
-            nombre_to_delete = 0  # Toujours 0 en mode A idem B
+        if result.returncode != 0:
+            error_msg = f"Erreur lors de la comparaison (code {result.returncode}): {result.stderr}"
+            logger.error(error_msg)
+            raise SyncError(error_msg)
 
-            logger.info("Mode A idem B : aucune suppression n'est effectuée")
-
-        else:
-            raise ValueError(f"Mode de comparaison invalide: {mode}")
-
-        # Sauvegarder les résultats
-        with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(
-                {
-                    "to_create": to_create,
-                    "to_update": to_update,
-                    "to_delete": to_delete,
-                    "to_bidirectionnel": [],
-                    "nombre_to_create": nombre_to_create,
-                    "nombre_to_update": nombre_to_update,
-                    "nombre_to_delete": nombre_to_delete,
-                    "nombre_to_bidirectionnel": 0,
-                    "error": None
-                },
-                f,
-                indent=2)
+        # Vérifier que le fichier de sortie a été créé
+        if not os.path.isfile(output_file):
+            raise SyncError(
+                f"Le fichier de sortie {output_file} n'a pas été créé")
 
         logger.info("=== COMPARAISON TERMINÉE ===")
 
@@ -701,12 +708,21 @@ def compare_folders(source_dir: str, dest_dir: str, mode: str,
         error_msg = f"Erreur lors de la comparaison: {str(e)}"
         logger.error(error_msg)
         # Sauvegarder l'erreur dans le fichier de sortie
-        with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump({"error": error_msg}, f, indent=2)
+        try:
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump({"error": error_msg}, f, indent=2)
+        except Exception as write_error:
+            logger.error(
+                f"Erreur lors de l'écriture du fichier d'erreur: {str(write_error)}"
+            )
         raise SyncError(error_msg)
 
 
-def sync_folders(source_dir, dest_dir, mode, output_file="sync_results.json"):
+def sync_folders(source_dir: str,
+                 dest_dir: str,
+                 mode: str,
+                 output_file: str = "sync_results.json",
+                 script_path: str = None) -> None:
     """
     Synchronise deux dossiers selon le mode spécifié.
 
@@ -715,168 +731,103 @@ def sync_folders(source_dir, dest_dir, mode, output_file="sync_results.json"):
         dest_dir (str): Chemin du dossier destination
         mode (str): Mode de synchronisation ('A vers B', 'B vers A', 'A idem B')
         output_file (str, optional): Chemin du fichier de sortie JSON. Defaults to "sync_results.json".
+        script_path (str, optional): Chemin du script bash. Si None, utilise le script au même niveau.
     """
     try:
-    source_dir = convert_path(source_dir)
-    dest_dir = convert_path(dest_dir)
+        # Convertir tous les chemins
+        source_dir = convert_path(source_dir)
+        dest_dir = convert_path(dest_dir)
+        output_file = convert_path(output_file)
 
-    log("=== DÉBUT DE LA SYNCHRONISATION ===")
-    log(f"Mode: {mode}")
-    log(f"Source: {source_dir}")
-    log(f"Destination: {dest_dir}")
+        log("=== DÉBUT DE LA SYNCHRONISATION ===")
+        log(f"Mode: {mode}")
+        log(f"Source: {source_dir}")
+        log(f"Destination: {dest_dir}")
         log(f"Fichier de sortie: {output_file}")
 
-        # Faire une comparaison avant la synchronisation
-        compare_folders(source_dir, dest_dir, mode, output_file)
+        # Utiliser le script bash au même niveau que ce fichier si non spécifié
+        if script_path is None:
+            script_path = os.path.join(os.path.dirname(__file__),
+                                       "sync_folders.sh")
 
-        # Lire les résultats de la comparaison
-        with open(output_file, 'r', encoding='utf-8') as f:
-            comparison_results = json.load(f)
+        script_path = convert_path(script_path)
+        script_dir = os.path.dirname(script_path)
 
-        # Vérifier s'il y a eu une erreur lors de la comparaison
-        if comparison_results.get("error"):
-            raise SyncError(
-                f"Erreur lors de la comparaison: {comparison_results['error']}"
-            )
+        # Vérifier que le script existe
+        if not os.path.isfile(script_path):
+            raise SyncError(f"Le script {script_path} n'existe pas")
 
-        # Loguer les détails de la synchronisation
-        log(f"Fichiers à créer: {len(comparison_results['to_create'])}")
-        for item in comparison_results['to_create']:
-            log(f"  - Création: {item}")
-
-        log(f"Fichiers à mettre à jour: {len(comparison_results['to_update'])}"
-            )
-        for item in comparison_results['to_update']:
-            log(f"  - Mise à jour: {item}")
-
-        if mode != "A idem B":
-            log(f"Fichiers à supprimer: {len(comparison_results['to_delete'])}"
-                )
-            for item in comparison_results['to_delete']:
-                log(f"  - Suppression: {item}")
-
-        # Convertir les chemins pour rsync (remplacer S: par le chemin local)
-        def convert_for_rsync(path):
-            if path.startswith('S:'):
-                return path.replace('S:', '/cygdrive/s')
-            return path
-
-        source_rsync = convert_for_rsync(source_dir)
-        dest_rsync = convert_for_rsync(dest_dir)
-
-        log(f"Chemin source pour rsync: {source_rsync}")
-        log(f"Chemin destination pour rsync: {dest_rsync}")
-
-        # Exécuter la synchronisation selon le mode
+        # Rendre le script exécutable
         try:
-    if mode == "A vers B":
-        log("Synchronisation A vers B")
-                result = subprocess.run([
-                    'rsync', '-av', '--delete', f"{source_rsync}/",
-                    f"{dest_rsync}/"
-                ],
-                                        capture_output=True,
-                                        text=True)
-    elif mode == "B vers A":
-        log("Synchronisation B vers A")
-                result = subprocess.run([
-                    'rsync', '-av', '--delete', f"{dest_rsync}/",
-                    f"{source_rsync}/"
-                ],
-                                        capture_output=True,
-                                        text=True)
-            elif mode == "A idem B":
-        log("Synchronisation bidirectionnelle")
-                result_ab = subprocess.run(
-                    ['rsync', '-av', f"{source_rsync}/", f"{dest_rsync}/"],
-                    capture_output=True,
-                    text=True)
-                result_ba = subprocess.run(
-                    ['rsync', '-av', f"{dest_rsync}/", f"{source_rsync}/"],
-                    capture_output=True,
-                    text=True)
+            os.chmod(script_path, 0o755)
+            logger.info(f"Script {script_path} rendu exécutable")
+        except Exception as e:
+            logger.error(f"Erreur lors du chmod +x: {str(e)}")
+            raise
 
-                # Vérifier les résultats des deux synchronisations
-                if result_ab.returncode != 0:
-                    log(f"ERREUR lors de la synchronisation A vers B: {result_ab.stderr}"
-                        )
-                if result_ba.returncode != 0:
-                    log(f"ERREUR lors de la synchronisation B vers A: {result_ba.stderr}"
-                        )
+        # Exécuter le script bash pour la synchronisation
+        script_name = os.path.basename(script_path)
 
-                # Combiner les sorties pour le log
-                result = result_ab
-                if result_ba.stdout:
-                    result.stdout += "\n" + result_ba.stdout
-                if result_ba.stderr:
-                    result.stderr += "\n" + result_ba.stderr
-                result.returncode = result_ab.returncode or result_ba.returncode
+        # Construire la commande avec les chemins convertis
+        cmd = f'cd "{script_dir}" && chmod +x "{script_name}" && ./{script_name} sync "{source_dir}" "{dest_dir}" "{mode}" "{output_file}"'
+        logger.info(f"Commande à exécuter: {cmd}")
 
-            # Vérifier le résultat de la synchronisation
-            if result.returncode != 0:
-                raise SyncError(
-                    f"rsync a échoué avec le code {result.returncode}: {result.stderr}"
-                )
+        # Exécuter la commande
+        env = os.environ.copy()
+        env["PATH"] = "/usr/bin:" + env.get("PATH", "")
 
-            # Loguer les détails de l'exécution
-            if result.stdout:
-                log("Détails de la synchronisation:")
-                for line in result.stdout.splitlines():
-                    log(f"  {line}")
+        result = subprocess.run(cmd,
+                                shell=True,
+                                capture_output=True,
+                                text=True,
+                                env=env)
 
-            # Sauvegarder les résultats dans un fichier JSON
-            sync_results = {
-                "status": "success",
-                "mode": mode,
-                "source": source_dir,
-                "destination": dest_dir,
-                "source_rsync": source_rsync,
-                "dest_rsync": dest_rsync,
-                "comparison": comparison_results,
-                "timestamp":
-                datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                "details": {
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
-                    "return_code": result.returncode
-                }
-            }
+        # Afficher la sortie standard et d'erreur pour le débogage
+        if result.stdout:
+            logger.info(f"Sortie standard:\n{result.stdout}")
+        if result.stderr:
+            logger.error(f"Sortie d'erreur:\n{result.stderr}")
 
-            with open(output_file, 'w', encoding='utf-8') as f:
-                json.dump(sync_results, f, indent=2)
-
-            log(f"Résultats de la synchronisation sauvegardés dans {output_file}"
-                )
-            log("=== SYNCHRONISATION TERMINÉE AVEC SUCCÈS ===")
-
-        except subprocess.CalledProcessError as e:
-            error_msg = f"Erreur lors de l'exécution de rsync: {str(e)}"
-            log(f"ERREUR: {error_msg}")
+        if result.returncode != 0:
+            error_msg = f"Erreur lors de la synchronisation (code {result.returncode}): {result.stderr}"
+            logger.error(error_msg)
             raise SyncError(error_msg)
+
+        # Vérifier que le fichier de sortie a été créé
+        if not os.path.isfile(output_file):
+            raise SyncError(
+                f"Le fichier de sortie {output_file} n'a pas été créé")
+
+        log("=== SYNCHRONISATION TERMINÉE AVEC SUCCÈS ===")
 
     except Exception as e:
         error_msg = f"Erreur lors de la synchronisation: {str(e)}"
         log(f"ERREUR: {error_msg}")
 
         # Sauvegarder l'erreur dans le fichier JSON
-        with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(
-                {
-                    "status":
-                    "error",
-                    "mode":
-                    mode,
-                    "source":
-                    source_dir,
-                    "destination":
-                    dest_dir,
-                    "error":
-                    error_msg,
-                    "timestamp":
-                    datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                },
-                f,
-                indent=2)
+        try:
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(
+                    {
+                        "status":
+                        "error",
+                        "mode":
+                        mode,
+                        "source":
+                        source_dir,
+                        "destination":
+                        dest_dir,
+                        "error":
+                        error_msg,
+                        "timestamp":
+                        datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    },
+                    f,
+                    indent=2)
+        except Exception as write_error:
+            logger.error(
+                f"Erreur lors de l'écriture du fichier d'erreur: {str(write_error)}"
+            )
 
         log("=== SYNCHRONISATION TERMINÉE AVEC ERREUR ===")
         raise SyncError(error_msg)
