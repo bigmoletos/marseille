@@ -1,4 +1,86 @@
 #!/bin/bash
+
+#####################################################################
+# Script de synchronisation de dossiers pour WSL et Linux
+#####################################################################
+# Description:
+#   Ce script permet de comparer et synchroniser deux dossiers en utilisant
+#   différents modes de synchronisation. Il gère la conversion des chemins
+#   Windows en chemins Unix et fournit des résultats détaillés au format JSON.
+#
+# Usage:
+#   ./sync_folders.sh <mode> <chemin_source> <chemin_destination> <description> <nom_fichier_sortie>
+#
+# Modes disponibles:
+#   - compare : Compare les dossiers et génère un rapport JSON
+#   - sync : Synchronise les dossiers selon le mode spécifié
+#
+# Modes de synchronisation:
+#   - "A vers B" : Copie de la source vers la destination (sauvegarde)
+#   - "B vers A" : Copie de la destination vers la source (restauration)
+#   - "A idem B" : Synchronisation bidirectionnelle (miroir)
+#
+# Exemple d'utilisation:
+#   bash -c 'bash ./sync_folders.sh compare "S:/sauve_dossier2" "S:/sauve_dossier3" "A vers B" "./output.json"'
+#
+# Dépendances:
+#   - rsync : Pour la synchronisation des fichiers
+#   - jq : Pour le traitement JSON
+#
+# Fonctions principales:
+#   - convert_path : Convertit les chemins Windows en chemins Unix
+#   - compare_folders : Compare deux dossiers et génère un rapport
+#   - sync_folders : Synchronise les dossiers selon le mode choisi
+#   - check_dependencies : Vérifie et installe les dépendances
+#
+# Fichiers générés:
+#   - sync.log : Journal des opérations
+#   - output.json : Résultat de la comparaison
+#
+# Notes:
+#   - Le script nécessite WSL ou Linux pour fonctionner
+#   - Les chemins Windows doivent être au format S:/chemin ou lettre:/chemin
+#   - Les permissions sudo peuvent être nécessaires pour l'installation des dépendances
+#
+# Auteur: bigmoletos
+# Date: 2024-02-21
+# Version: 1.0
+#####################################################################
+
+# Définition des codes couleurs pour les logs
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# Fonctions de logging avec couleurs
+log_info() {
+    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')] INFO: $1${NC}" | tee -a sync.log
+}
+
+log_success() {
+    echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] SUCCÈS: $1${NC}" | tee -a sync.log
+}
+
+log_warning() {
+    echo -e "${YELLOW}[$(date '+%Y-%m-%d %H:%M:%S')] ATTENTION: $1${NC}" | tee -a sync.log
+}
+
+log_error() {
+    echo -e "${RED}[$(date '+%Y-%m-%d %H:%M:%S')] ERREUR: $1${NC}" | tee -a sync.log
+}
+
+log_status() {
+    echo -e "${CYAN}[$(date '+%Y-%m-%d %H:%M:%S')] STATUS: $1${NC}" | tee -a sync.log
+}
+
+# Fonction de logging générique (pour compatibilité)
+log() {
+    log_info "$1"
+}
+
 # ce fichier peut fonctionne seul en mode terminal sous wsl ou linux
 # Pour lancer le script, il faut se placer dans le dossier syn_flask et lancer le script avec la commande :
 # ./sync_folders.sh <mode> <chemin_source> <chemin_destination> <description> <nom_fichier_sortie>
@@ -18,12 +100,6 @@ convert_path() {
         # Pour les autres chemins, conversion standard
         echo "$path" | sed 's/\\/\//g' | sed 's/^\([A-Za-z]\):/\/mnt\/\L\1/'
     fi
-}
-
-# Fonction de logging
-log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> sync.log
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
 
 # Fonction pour afficher une barre de progression
@@ -82,32 +158,39 @@ count_total_files() {
 check_dependencies() {
     local output_file="$1"
     local missing_deps=()
+    log_status "=== VÉRIFICATION DES DÉPENDANCES ==="
 
     # Vérifier rsync
     if ! command -v rsync &> /dev/null; then
+        log_error "rsync non trouvé"
         missing_deps+=("rsync")
+    else
+        log_success "rsync trouvé"
     fi
 
     # Vérifier jq
     if ! command -v jq &> /dev/null; then
+        log_error "jq non trouvé"
         missing_deps+=("jq")
+    else
+        log_success "jq trouvé"
     fi
 
     if [ ${#missing_deps[@]} -gt 0 ]; then
-        log "Installation des dépendances manquantes : ${missing_deps[*]}"
+        log_warning "Installation des dépendances manquantes : ${missing_deps[*]}"
         if command -v apt-get &> /dev/null; then
-            log "Installation via apt-get..."
+            log_info "Installation via apt-get..."
             sudo apt-get update && sudo apt-get install -y "${missing_deps[@]}"
             if [ $? -eq 0 ]; then
-                log "Dépendances installées avec succès"
+                log_success "Dépendances installées avec succès"
                 return 0
             else
-                log "ERREUR: Impossible d'installer les dépendances"
+                log_error "Impossible d'installer les dépendances"
                 echo "{\"error\": \"Impossible d installer les dépendances\"}" > "$output_file"
                 return 1
             fi
         else
-            log "ERREUR: apt-get n'est pas disponible"
+            log_error "apt-get n'est pas disponible"
             echo "{\"error\": \"apt-get n est pas disponible pour installer les dépendances\"}" > "$output_file"
             return 1
         fi
@@ -226,6 +309,7 @@ generate_folder_json() {
 compare_json_folders() {
     local source_json="$1"
     local dest_json="$2"
+    log_info "Début de la comparaison des fichiers JSON"
 
     # Réinitialiser les compteurs et les tableaux
     declare -g nombre_to_create=0
@@ -288,6 +372,7 @@ compare_json_folders() {
     # Comparer les fichiers
     local source_files=$(jq -r '.files[].name' "$source_json")
     local dest_files=$(jq -r '.files[].name' "$dest_json")
+    log_info "Nombre de fichiers trouvés - Source: $(echo "$source_files" | wc -l), Destination: $(echo "$dest_files" | wc -l)"
 
     # Fichiers à créer (dans source mais pas dans dest)
     while IFS= read -r file; do
@@ -338,11 +423,11 @@ compare_folders() {
     local mode="$3"
     local output_file="$4"
 
-    log "=== DÉBUT DE LA COMPARAISON ==="
-    log "Mode: $mode"
-    log "Source: $1 -> $source_dir"
-    log "Destination: $2 -> $dest_dir"
-    log "Fichier de sortie: $4 -> $output_file"
+    log_status "=== DÉBUT DE LA COMPARAISON ==="
+    log_info "Mode: $mode"
+    log_info "Source: $1 -> $source_dir"
+    log_info "Destination: $2 -> $dest_dir"
+    log_info "Fichier de sortie: $4 -> $output_file"
 
     # Vérification des dépendances
     check_dependencies "$output_file" || return 1
@@ -378,7 +463,7 @@ compare_folders() {
 
     case "$mode" in
         "A vers B")
-            log "Mode de comparaison: A vers B (sauvegarde)"
+            log_info "Mode de comparaison: A vers B (sauvegarde)"
 
             # Générer les JSON pour les deux dossiers
             source_json=$(generate_folder_json "$source_dir")
@@ -406,7 +491,7 @@ compare_folders() {
             ;;
 
         "B vers A")
-            log "Mode de comparaison: B vers A (restauration)"
+            log_info "Mode de comparaison: B vers A (restauration)"
 
             # Utiliser rsync en mode dry-run pour comparer les fichiers
             temp_file=$(mktemp)
@@ -415,14 +500,14 @@ compare_folders() {
 
             # Vérifier si rsync a réussi
             if [ $rsync_status -ne 0 ]; then
-                log "ERREUR: rsync a échoué avec le code $rsync_status"
-                log "Sortie d'erreur: $(cat "$temp_file")"
+                log_error "ERREUR: rsync a échoué avec le code $rsync_status"
+                log_error "Sortie d'erreur: $(cat "$temp_file")"
                 rm "$temp_file"
                 echo '{"error": "rsync a échoué"}' > "$output_file"
                 return 1
             fi
 
-            log "Analyse des différences..."
+            log_info "Analyse des différences..."
 
             while IFS= read -r line; do
                 [[ -z "$line" ]] && continue
@@ -435,19 +520,19 @@ compare_folders() {
                 change_type=${line:0:2}
                 file_name=$(echo "$line" | sed 's/^[^ ]* *//')
 
-                log "Ligne analysée: [$change_type] [$file_name]"
+                log_info "Ligne analysée: [$change_type] [$file_name]"
 
                 case "$change_type" in
                     ">f"|">d"|".d")
-                        log "Nouveau fichier/dossier à créer en sens inverse : $file_name"
+                        log_info "Nouveau fichier/dossier à créer en sens inverse : $file_name"
                         add_to_array "$file_name" to_create_reverse
                         ;;
                     "cf"|"cd")
-                        log "Fichier/dossier à mettre à jour en sens inverse : $file_name"
+                        log_info "Fichier/dossier à mettre à jour en sens inverse : $file_name"
                         add_to_array "$file_name" to_create_reverse
                         ;;
                     "*d"|"*f")
-                        log "Fichier/dossier à supprimer : $file_name"
+                        log_info "Fichier/dossier à supprimer : $file_name"
                         add_to_array "$file_name" to_delete
                         ;;
                 esac
@@ -458,7 +543,7 @@ compare_folders() {
             ;;
 
         "Bidirectionnel")
-            log "Mode de comparaison: Bidirectionnel (miroir)"
+            log_info "Mode de comparaison: Bidirectionnel (miroir)"
 
             # Vérifier les changements de A vers B
             temp_file=$(mktemp)
@@ -467,14 +552,14 @@ compare_folders() {
 
             # Vérifier si rsync a réussi
             if [ $rsync_status -ne 0 ]; then
-                log "ERREUR: rsync a échoué avec le code $rsync_status"
-                log "Sortie d'erreur: $(cat "$temp_file")"
+                log_error "ERREUR: rsync a échoué avec le code $rsync_status"
+                log_error "Sortie d'erreur: $(cat "$temp_file")"
                 rm "$temp_file"
                 echo '{"error": "rsync a échoué"}' > "$output_file"
                 return 1
             fi
 
-            log "Analyse des différences A vers B..."
+            log_info "Analyse des différences A vers B..."
 
             while IFS= read -r line; do
                 [[ -z "$line" ]] && continue
@@ -487,15 +572,15 @@ compare_folders() {
                 change_type=${line:0:2}
                 file_name=$(echo "$line" | sed 's/^[^ ]* *//')
 
-                log "Ligne analysée: [$change_type] [$file_name]"
+                log_info "Ligne analysée: [$change_type] [$file_name]"
 
                 case "$change_type" in
                     ">f"|">d"|".d")
-                        log "Nouveau fichier/dossier à créer : $file_name"
+                        log_info "Nouveau fichier/dossier à créer : $file_name"
                         add_to_array "$file_name" to_create
                         ;;
                     "cf"|"cd")
-                        log "Fichier/dossier à mettre à jour : $file_name"
+                        log_info "Fichier/dossier à mettre à jour : $file_name"
                         add_to_array "$file_name" to_update
                         ;;
                 esac
@@ -511,14 +596,14 @@ compare_folders() {
 
             # Vérifier si rsync a réussi
             if [ $rsync_status -ne 0 ]; then
-                log "ERREUR: rsync a échoué avec le code $rsync_status"
-                log "Sortie d'erreur: $(cat "$temp_file")"
+                log_error "ERREUR: rsync a échoué avec le code $rsync_status"
+                log_error "Sortie d'erreur: $(cat "$temp_file")"
                 rm "$temp_file"
                 echo '{"error": "rsync a échoué"}' > "$output_file"
                 return 1
             fi
 
-            log "Analyse des différences B vers A..."
+            log_info "Analyse des différences B vers A..."
 
             while IFS= read -r line; do
                 [[ -z "$line" ]] && continue
@@ -531,15 +616,15 @@ compare_folders() {
                 change_type=${line:0:2}
                 file_name=$(echo "$line" | sed 's/^[^ ]* *//')
 
-                log "Ligne analysée: [$change_type] [$file_name]"
+                log_info "Ligne analysée: [$change_type] [$file_name]"
 
                 case "$change_type" in
                     ">f"|">d"|".d")
-                        log "Nouveau fichier/dossier à créer en sens inverse : $file_name"
+                        log_info "Nouveau fichier/dossier à créer en sens inverse : $file_name"
                         add_to_array "$file_name" to_create_reverse
                         ;;
                     "cf"|"cd")
-                        log "Fichier/dossier à mettre à jour en sens inverse : $file_name"
+                        log_info "Fichier/dossier à mettre à jour en sens inverse : $file_name"
                         add_to_array "$file_name" to_create_reverse
                         ;;
                 esac
@@ -551,25 +636,25 @@ compare_folders() {
     esac
 
     # Log des résultats
-    log "=== Résultats de la comparaison ==="
-    log "Fichiers à créer (${#to_create[@]}):"
+    log_info "=== Résultats de la comparaison ==="
+    log_info "Fichiers à créer (${#to_create[@]}):"
     for file in "${to_create[@]}"; do
-        log "  - $file"
+        log_info "  - $file"
     done
 
-    log "Fichiers à mettre à jour (${#to_update[@]}):"
+    log_info "Fichiers à mettre à jour (${#to_update[@]}):"
     for file in "${to_update[@]}"; do
-        log "  - $file"
+        log_info "  - $file"
     done
 
-    log "Fichiers à supprimer (${#to_delete[@]}):"
+    log_info "Fichiers à supprimer (${#to_delete[@]}):"
     for file in "${to_delete[@]}"; do
-        log "  - $file"
+        log_info "  - $file"
     done
 
-    log "Fichiers à créer en sens inverse (${#to_create_reverse[@]}):"
+    log_info "Fichiers à créer en sens inverse (${#to_create_reverse[@]}):"
     for file in "${to_create_reverse[@]}"; do
-        log "  - $file"
+        log_info "  - $file"
     done
 
     return 0
@@ -581,43 +666,44 @@ sync_folders() {
     local dest_dir=$(convert_path "$2")
     local mode="$3"
 
-    log "=== DÉBUT DE LA SYNCHRONISATION ==="
-    log "Mode: $mode"
-    log "Source: $1 -> $source_dir"
-    log "Destination: $2 -> $dest_dir"
+    log_status "=== DÉBUT DE LA SYNCHRONISATION ==="
+    log_info "Mode: $mode"
+    log_info "Source: $1 -> $source_dir"
+    log_info "Destination: $2 -> $dest_dir"
+    log_warning "Vérification des permissions d'accès aux dossiers..."
 
     case "$mode" in
         "A vers B")
-            log "Synchronisation A vers B"
+            log_info "Démarrage de la synchronisation A vers B"
             rsync -av --delete "$source_dir/" "$dest_dir/"
             ;;
         "B vers A")
-            log "Synchronisation B vers A"
+            log_info "Démarrage de la synchronisation B vers A"
             rsync -av --delete "$dest_dir/" "$source_dir/"
             ;;
         "Bidirectionnel")
-            log "Synchronisation bidirectionnelle"
-            # Synchroniser A vers B sans suppression
+            log_info "Démarrage de la synchronisation bidirectionnelle"
             rsync -av "$source_dir/" "$dest_dir/"
-            # Synchroniser B vers A sans suppression
             rsync -av "$dest_dir/" "$source_dir/"
             ;;
     esac
 
-    log "=== SYNCHRONISATION TERMINÉE ==="
+    log_success "=== SYNCHRONISATION TERMINÉE ==="
     return 0
 }
 
 # Point d'entrée principal
 case "$1" in
     "compare")
+        log_info "Lancement de la comparaison des dossiers"
         compare_folders "$2" "$3" "$4" "$5"
         ;;
     "sync")
+        log_info "Lancement de la synchronisation des dossiers"
         sync_folders "$2" "$3" "$4"
         ;;
     *)
-        echo "Usage: $0 {compare|sync} [arguments]"
+        log_error "Usage: $0 {compare|sync} [arguments]"
         exit 1
         ;;
 esac
