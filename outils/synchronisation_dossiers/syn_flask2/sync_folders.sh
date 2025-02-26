@@ -160,12 +160,37 @@ check_dependencies() {
     local missing_deps=()
     log_status "=== VÉRIFICATION DES DÉPENDANCES ==="
 
+    # Détection du système
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        log_info "Système détecté: $NAME version $VERSION_ID"
+    fi
+
+    # Vérifier si sudo est disponible
+    local has_sudo=false
+    if command -v sudo >/dev/null 2>&1; then
+        has_sudo=true
+        log_success "sudo est disponible"
+    else
+        log_warning "sudo n'est pas installé, tentative d'utilisation de su"
+    fi
+
     # Vérifier rsync
     if ! command -v rsync &> /dev/null; then
         log_error "rsync non trouvé"
         missing_deps+=("rsync")
     else
-        log_success "rsync trouvé"
+        # Vérifier la version de rsync
+        local rsync_version=$(rsync --version | head -n1 | cut -d' ' -f3)
+        log_success "rsync trouvé (version $rsync_version)"
+
+        # Vérifier les options essentielles de rsync
+        if ! rsync --help | grep -q -- "--delete"; then
+            log_warning "L'option --delete n'est pas disponible dans cette version de rsync"
+        fi
+        if ! rsync --help | grep -q -- "--archive"; then
+            log_warning "L'option --archive n'est pas disponible dans cette version de rsync"
+        fi
     fi
 
     # Vérifier jq
@@ -173,28 +198,45 @@ check_dependencies() {
         log_error "jq non trouvé"
         missing_deps+=("jq")
     else
-        log_success "jq trouvé"
+        local jq_version=$(jq --version 2>&1)
+        log_success "jq trouvé (version $jq_version)"
     fi
 
     if [ ${#missing_deps[@]} -gt 0 ]; then
         log_warning "Installation des dépendances manquantes : ${missing_deps[*]}"
-        if command -v apt-get &> /dev/null; then
-            log_info "Installation via apt-get..."
-            sudo apt-get update && sudo apt-get install -y "${missing_deps[@]}"
-            if [ $? -eq 0 ]; then
-                log_success "Dépendances installées avec succès"
-                return 0
-            else
-                log_error "Impossible d'installer les dépendances"
-                echo "{\"error\": \"Impossible d installer les dépendances\"}" > "$output_file"
-                return 1
+
+        # Vérifier si on est sur Debian ou Ubuntu
+        if [ -f /etc/debian_version ]; then
+            log_info "Système Debian/Ubuntu détecté"
+
+            # Mettre à jour uniquement les index des paquets nécessaires
+            log_info "Mise à jour des index des paquets..."
+            if ! sudo apt-get update -qq 2>/dev/null; then
+                log_warning "Impossible de mettre à jour les index, tentative d'installation directe"
             fi
+
+            # Installer chaque dépendance séparément
+            for dep in "${missing_deps[@]}"; do
+                log_info "Installation de $dep..."
+                if sudo apt-get install -y "$dep"; then
+                    log_success "$dep installé avec succès"
+                else
+                    log_error "Échec de l'installation de $dep"
+                    echo "{\"error\": \"Impossible d installer $dep\"}" > "$output_file"
+                    return 1
+                fi
+            done
+
+            log_success "Toutes les dépendances ont été installées"
+            return 0
         else
-            log_error "apt-get n'est pas disponible"
-            echo "{\"error\": \"apt-get n est pas disponible pour installer les dépendances\"}" > "$output_file"
+            log_error "Système non supporté (ni Debian ni Ubuntu)"
+            echo "{\"error\": \"Système non supporté\"}" > "$output_file"
             return 1
         fi
     fi
+
+    log_success "Toutes les dépendances sont satisfaites"
     return 0
 }
 
@@ -672,19 +714,44 @@ sync_folders() {
     log_info "Destination: $2 -> $dest_dir"
     log_warning "Vérification des permissions d'accès aux dossiers..."
 
+    # Vérifier les permissions avant la synchronisation
+    if [ ! -r "$source_dir" ]; then
+        log_error "Pas de permission de lecture sur le dossier source"
+        return 1
+    fi
+    if [ ! -w "$dest_dir" ]; then
+        log_error "Pas de permission d'écriture sur le dossier destination"
+        return 1
+    fi
+
+    # Options de base pour rsync
+    local rsync_opts="-rtlv --progress"
+
     case "$mode" in
         "A vers B")
             log_info "Démarrage de la synchronisation A vers B"
-            rsync -av --delete "$source_dir/" "$dest_dir/"
+            if ! rsync $rsync_opts --delete "$source_dir/" "$dest_dir/"; then
+                log_error "Erreur lors de la synchronisation A vers B"
+                return 1
+            fi
             ;;
         "B vers A")
             log_info "Démarrage de la synchronisation B vers A"
-            rsync -av --delete "$dest_dir/" "$source_dir/"
+            if ! rsync $rsync_opts --delete "$dest_dir/" "$source_dir/"; then
+                log_error "Erreur lors de la synchronisation B vers A"
+                return 1
+            fi
             ;;
         "Bidirectionnel")
             log_info "Démarrage de la synchronisation bidirectionnelle"
-            rsync -av "$source_dir/" "$dest_dir/"
-            rsync -av "$dest_dir/" "$source_dir/"
+            if ! rsync $rsync_opts "$source_dir/" "$dest_dir/"; then
+                log_error "Erreur lors de la synchronisation A vers B"
+                return 1
+            fi
+            if ! rsync $rsync_opts "$dest_dir/" "$source_dir/"; then
+                log_error "Erreur lors de la synchronisation B vers A"
+                return 1
+            fi
             ;;
     esac
 
