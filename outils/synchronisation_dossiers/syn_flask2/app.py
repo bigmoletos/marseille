@@ -29,6 +29,7 @@ from pathlib import Path, PureWindowsPath
 from flask import Flask, render_template, request, jsonify
 import datetime
 import shutil
+from typing import List
 
 # Import depuis le même répertoire
 import syn_folders_to_container
@@ -229,28 +230,90 @@ def perform_sync(source_dir: str, dest_dir: str, mode: str) -> None:
                         dst_file = os.path.join(
                             dest_path, os.path.relpath(src_file, source_path))
                         os.makedirs(os.path.dirname(dst_file), exist_ok=True)
-                        shutil.copy2(src_file, dst_file)
-                        logger.info(
-                            f"Fichier copié: {os.path.relpath(dst_file, dest_dir)}"
-                        )
+                        try:
+                            # Si c'est un fichier Git en lecture seule, on force la copie
+                            if ".git" in dst_file and os.path.exists(dst_file):
+                                os.chmod(dst_file, 0o666)
+                            shutil.copy2(src_file, dst_file)
+                            # Rendre le fichier copié en lecture seule si c'est un fichier Git
+                            if ".git" in dst_file:
+                                os.chmod(dst_file, 0o444)
+                            logger.info(
+                                f"Fichier copié: {os.path.relpath(dst_file, dest_dir)}"
+                            )
+                        except PermissionError:
+                            try:
+                                # Deuxième tentative avec forçage des permissions
+                                if os.path.exists(dst_file):
+                                    os.chmod(dst_file, 0o666)
+                                shutil.copy2(src_file, dst_file)
+                                if ".git" in dst_file:
+                                    os.chmod(dst_file, 0o444)
+                                logger.info(
+                                    f"Fichier copié (2e tentative): {os.path.relpath(dst_file, dest_dir)}"
+                                )
+                            except Exception as e:
+                                logger.warning(
+                                    f"Permission refusée pour: {os.path.relpath(src_file, source_path)} - {str(e)}"
+                                )
 
             # Si c'est un fichier
             elif os.path.isfile(source_path):
-                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                shutil.copy2(source_path, dest_path)
-                logger.info(f"Fichier copié: {item}")
+                try:
+                    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                    # Si c'est un fichier Git en lecture seule, on force la copie
+                    if ".git" in dest_path and os.path.exists(dest_path):
+                        os.chmod(dest_path, 0o666)
+                    shutil.copy2(source_path, dest_path)
+                    # Rendre le fichier copié en lecture seule si c'est un fichier Git
+                    if ".git" in dest_path:
+                        os.chmod(dest_path, 0o444)
+                    logger.info(f"Fichier copié: {item}")
+                except PermissionError:
+                    try:
+                        # Deuxième tentative avec forçage des permissions
+                        if os.path.exists(dest_path):
+                            os.chmod(dest_path, 0o666)
+                        shutil.copy2(source_path, dest_path)
+                        if ".git" in dest_path:
+                            os.chmod(dest_path, 0o444)
+                        logger.info(f"Fichier copié (2e tentative): {item}")
+                    except Exception as e:
+                        logger.warning(
+                            f"Permission refusée pour: {item} - {str(e)}")
 
         # Supprimer les fichiers si nécessaire (sauf en mode bidirectionnel)
         if mode != "A idem B":
             for item in syn_folders_to_container.to_delete:
                 path_to_delete = os.path.join(dest_dir, item)
                 if os.path.exists(path_to_delete):
-                    if os.path.isfile(path_to_delete):
-                        os.remove(path_to_delete)
-                        logger.info(f"Fichier supprimé: {item}")
-                    elif os.path.isdir(path_to_delete):
-                        shutil.rmtree(path_to_delete)
-                        logger.info(f"Dossier supprimé: {item}")
+                    try:
+                        if os.path.isfile(path_to_delete):
+                            # Si c'est un fichier Git, on le rend modifiable avant de le supprimer
+                            if ".git" in path_to_delete:
+                                os.chmod(path_to_delete, 0o666)
+                            os.remove(path_to_delete)
+                            logger.info(f"Fichier supprimé: {item}")
+                        elif os.path.isdir(path_to_delete):
+                            # Pour les dossiers Git, on rend tous les fichiers modifiables
+                            if ".git" in path_to_delete:
+                                for root, _, files in os.walk(path_to_delete):
+                                    for f in files:
+                                        try:
+                                            os.chmod(os.path.join(root, f),
+                                                     0o666)
+                                        except:
+                                            pass
+                            shutil.rmtree(path_to_delete)
+                            logger.info(f"Dossier supprimé: {item}")
+                    except PermissionError:
+                        logger.warning(
+                            f"Permission refusée pour la suppression de: {item}"
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Erreur lors de la suppression de {item}: {str(e)}"
+                        )
 
         logger.info(f"""
 Synchronisation terminée:
@@ -359,6 +422,40 @@ def internal_error(error):
 
 if __name__ == '__main__':
     try:
+        # Redémarrer winnat en exécutant le script PowerShell avec privilèges admin
+        try:
+            logger.info("Redémarrage de winnat...")
+            # Chemin du script PowerShell
+            script_path = os.path.join(SCRIPT_DIR, "relance_winnat.ps1")
+
+            # Vérifier que le script existe
+            if not os.path.exists(script_path):
+                raise FileNotFoundError(
+                    f"Le script {script_path} n'existe pas")
+
+            # Exécuter le script PowerShell avec privilèges administrateur
+            process = subprocess.run([
+                'powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+                '-File', script_path
+            ],
+                                     capture_output=True,
+                                     text=True)
+
+            # Vérifier si l'exécution a réussi
+            if process.returncode == 0:
+                logger.info("Redémarrage de winnat effectué avec succès")
+                if process.stdout:
+                    logger.info(f"Sortie du script: {process.stdout}")
+            else:
+                logger.error(
+                    f"Erreur lors du redémarrage de winnat: {process.stderr}")
+                logger.warning(
+                    "L'application continue malgré l'erreur de winnat")
+
+        except Exception as e:
+            logger.error(f"Erreur lors du redémarrage de winnat: {str(e)}")
+            logger.warning("L'application continue malgré l'erreur de winnat")
+
         # Initialisation
         ensure_directories()
         setup_logging()
@@ -366,6 +463,7 @@ if __name__ == '__main__':
 
         # Démarrage de l'application
         app.run(host='0.0.0.0', port=5000, debug=True)
+
     except Exception as e:
         logger.critical(
             f"Erreur fatale lors du démarrage de l'application: {str(e)}",

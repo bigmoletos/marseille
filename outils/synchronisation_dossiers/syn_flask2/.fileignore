@@ -14,35 +14,7 @@ env/
 ENV/
 pythonenv*/
 
-; # Fichiers Python
-; __pycache__/
-; *.py[cod]
-; *$py.class
-; *.so
-; .Python
-; build/
-; develop-eggs/
-; dist/
-; downloads/
-; eggs/
-; .eggs/
-; lib/
-; lib64/
-; parts/
-; sdist/
-; var/
-; wheels/
-; *.egg-info/
-; .installed.cfg
-; *.egg
-; MANIFEST
 
-; # Git
-; .git/
-; .gitignore
-; .gitattributes
-; .github/
-; .gitmodules
 
 # IDE et éditeurs
 .idea/
@@ -58,49 +30,6 @@ pythonenv*/
 .vs/
 *.code-workspace
 
-# Logs et bases de données
-; *.log
-; *.sql
-; *.sqlite
-; *.db
-; logs/
-; log/
-
-; # Fichiers temporaires
-; tmp/
-; temp/
-; *.tmp
-; *.bak
-; *.swp
-; *.swo
-; *~
-; .temp/
-; .tmp/
-
-; # Fichiers de compilation
-; *.com
-; *.class
-; *.dll
-; *.exe
-; *.o
-; *.out
-; *.app
-
-# Fichiers de configuration locaux
-; .env
-; .env.local
-; .env.*.local
-; .env.development.local
-; .env.test.local
-; .env.production.local
-
-# Dépendances et packages
-; node_modules/
-; jspm_packages/
-; bower_components/
-; package-lock.json
-; yarn.lock
-; composer.lock
 
 # Fichiers de cache
 .cache/
@@ -112,23 +41,7 @@ htmlcov/
 .nox/
 .hypothesis/
 
-# Documentation générée
-; docs/_build/
-; site/
-; .docusaurus
 
-# Fichiers de déploiement
-; *.deploy
-; deploy/
-; deployment/
-
-# Fichiers de sauvegarde
-; *.bak
-; *.backup
-; *~
-; *.old
-; *.orig
-; *.rej
 
 # Fichiers spécifiques aux OS
 .Spotlight-V100
@@ -138,28 +51,6 @@ ehthumbs.db
 $RECYCLE.BIN/
 .directory
 
-# Fichiers média et binaires volumineux
-; *.iso
-; *.tar
-; *.gz
-; *.zip
-; *.7z
-; *.rar
-; *.mp3
-; *.mp4
-; *.avi
-; *.mov
-; *.wmv
-; *.flv
-; *.mkv
-
-# Fichiers de certificats et secrets
-; *.pem
-; *.key
-; *.cert
-; *.crt
-; *.p12
-; *.pfx
 
 # Fichiers Python
 __pycache__
@@ -184,62 +75,3 @@ __pycache__
 *.swo
 *~
 
-; # Fichiers de logs
-; *.log
-; logs/
-; log/
-
-; # Fichiers temporaires
-; *.tmp
-; *.temp
-; *.bak
-; *.backup
-; *_backup
-; *.old
-
-; # Fichiers de configuration locale
-; .env.local
-; .env.*.local
-; config.local.json
-
-; # Fichiers de build
-; build/
-; dist/
-; *.egg-info/
-
-; # Fichiers de dépendances
-; node_modules/
-; package-lock.json
-; yarn.lock
-
-; # Fichiers de base de données
-; *.db
-; *.sqlite
-; *.sqlite3
-
-# Fichiers de sauvegarde automatique
-.#*
-#*#
-; *.save
-
-; # Fichiers de médias volumineux
-; *.mp4
-; *.mov
-; *.avi
-; *.wmv
-; *.flv
-; *.iso
-; *.img
-
-; # Fichiers de compilation
-; *.o
-; *.obj
-; *.exe
-; *.dll
-; *.so
-; *.dylib
-
-# Autres
-.git/
-; .gitignore
-; .dockerignore
