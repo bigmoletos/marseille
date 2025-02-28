@@ -381,60 +381,69 @@ def get_relative_path(path: str, base_path: str) -> str:
 
 
 def generate_folder_json(dir_path: str) -> str:
-    """
-    Génère une représentation JSON d'un dossier.
+    """Génère une représentation JSON contenant la liste des fichiers et dossiers.
 
     Args:
-        dir_path (str): Chemin du dossier
+        dir_path (str): Chemin du dossier à analyser
 
     Returns:
-        str: Représentation JSON du dossier
-
-    Raises:
-        OSError: Si le dossier n'est pas accessible
-        ValueError: Si le chemin est invalide
+        str: Représentation JSON du dossier (chaîne de caractères)
     """
     try:
-        # Convertir et nettoyer le chemin
-        dir_path = clean_path(dir_path)
+        # Convertir le chemin Windows en chemin compatible WSL si nécessaire
+        if platform.system() == "Linux" and ":" in dir_path:
+            dir_path = convert_path(dir_path)
+
+        if not os.path.exists(dir_path):
+            logger.error(f"Le dossier {dir_path} n'existe pas")
+            return json.dumps({"error": "Le dossier n'existe pas", "folders": [], "files": []})
+
         folders = []
         files = []
 
-        logger.info(f"Génération du JSON pour le dossier: {dir_path}")
+        # Lister tous les éléments du dossier
+        for item in os.listdir(dir_path):
+            item_path = os.path.join(dir_path, item)
 
-        for entry in Path(dir_path).iterdir():
             try:
-                # Utiliser seulement le nom du fichier/dossier
-                name = entry.name
+                # Obtenir les stats du fichier
+                stats = os.stat(item_path)
+                mtime = int(stats.st_mtime)
+                size = stats.st_size
 
-                if entry.is_dir():
-                    folder_date = datetime.datetime.fromtimestamp(
-                        entry.stat().st_mtime).strftime('%Y%m%d%H%M%S')
-                    folders.append({"name": name, "date": folder_date})
-                    logger.debug(f"Dossier ajouté: {name}")
-                elif entry.is_file():
-                    file_date = datetime.datetime.fromtimestamp(
-                        entry.stat().st_mtime).strftime('%Y%m%d%H%M%S')
-                    file_size = entry.stat().st_size
+                # Convertir le timestamp en format lisible
+                date_str = datetime.datetime.fromtimestamp(mtime).strftime('%Y%m%d%H%M%S')
+
+                if os.path.isdir(item_path):
+                    folders.append({"name": item, "date": date_str})
+                    logger.debug(f"Dossier trouvé: {item}")
+                else:
                     files.append({
-                        "name": name,
-                        "date": file_date,
-                        "size": file_size
+                        "name": item,
+                        "date": date_str,
+                        "size": str(size)
                     })
-                    logger.debug(f"Fichier ajouté: {name}")
-            except Exception as e:
-                logger.warning(
-                    f"Erreur lors du traitement de l'entrée {entry}: {str(e)}")
+                    logger.debug(f"Fichier trouvé: {item}")
+
+            except (OSError, PermissionError) as e:
+                logger.warning(f"Erreur lors de l'accès à {item}: {str(e)}")
                 continue
 
-        result = json.dumps({"folders": folders, "files": files}, indent=2)
-        logger.debug("Génération du JSON terminée avec succès")
-        return result
+        # Créer le JSON final
+        result = {
+            "folders": sorted(folders, key=lambda x: x["name"]),
+            "files": sorted(files, key=lambda x: x["name"])
+        }
+
+        # Convertir en chaîne JSON
+        json_str = json.dumps(result, indent=2, ensure_ascii=False)
+
+        logger.info(f"JSON généré avec {len(folders)} dossiers et {len(files)} fichiers")
+        return json_str
 
     except Exception as e:
-        logger.error(
-            f"Erreur lors de la génération du JSON pour {dir_path}: {str(e)}")
-        raise
+        logger.error(f"Erreur lors de la génération du JSON: {str(e)}")
+        return json.dumps({"error": str(e), "folders": [], "files": []})
 
 
 def normalize_path_for_json(path: str) -> str:
@@ -470,97 +479,83 @@ def normalize_path_for_json(path: str) -> str:
 
 
 def compare_json_folders(source_json: str, dest_json: str) -> None:
-    """
-    Compare deux représentations JSON de dossiers et génère les listes de différences.
+    """Compare deux représentations JSON de dossiers pour déterminer les différences.
 
     Args:
-        source_json (str): JSON du dossier source
-        dest_json (str): JSON du dossier destination
+        source_json (str): Représentation JSON du dossier source (chaîne)
+        dest_json (str): Représentation JSON du dossier destination (chaîne)
     """
     try:
-        global nombre_to_create, nombre_to_update, nombre_to_delete, nombre_to_bidirectionnel
-        nombre_to_create = nombre_to_update = nombre_to_delete = nombre_to_bidirectionnel = 0
-        global to_create, to_update, to_delete
-        to_create = []
-        to_update = []
-        to_delete = []
-
+        # Charger les données JSON
         source_data = json.loads(source_json)
         dest_data = json.loads(dest_json)
 
-        source_folders = {
-            folder['name']: folder['date']
-            for folder in source_data['folders']
-        }
-        dest_folders = {
-            folder['name']: folder['date']
-            for folder in dest_data['folders']
-        }
+        # Réinitialiser les listes globales
+        global to_create, to_update, to_delete, to_create_reverse, nombre_to_create, nombre_to_update, nombre_to_delete
+        to_create = []
+        to_update = []
+        to_delete = []
+        to_create_reverse = []
 
-        # Traitement des dossiers
-        for folder, source_date in source_folders.items():
-            if folder not in dest_folders:
-                if "Copie" in folder:
-                    to_create.append(folder)
-                    nombre_to_create += 1
-                else:
-                    to_update.append(folder)
-                    nombre_to_update += 1
-            else:
-                dest_date = dest_folders[folder]
-                if source_date != dest_date:
-                    if "Copie" in folder:
-                        to_create.append(folder)
-                        nombre_to_create += 1
-                    else:
-                        to_update.append(folder)
-                        nombre_to_update += 1
+        logger.info("Début de la comparaison des fichiers JSON")
+        logger.info(f"Nombre de fichiers trouvés - Source: {len(source_data['folders']) + len(source_data['files'])}, Destination: {len(dest_data['folders']) + len(dest_data['files'])}")
 
-        for folder in dest_folders.keys():
-            if folder not in source_folders:
-                to_delete.append(folder)
-                nombre_to_delete += 1
+        # Créer des dictionnaires pour un accès plus rapide
+        source_folders = {item["name"]: item for item in source_data["folders"]}
+        source_files = {item["name"]: item for item in source_data["files"]}
+        dest_folders = {item["name"]: item for item in dest_data["folders"]}
+        dest_files = {item["name"]: item for item in dest_data["files"]}
 
-        # Traitement des fichiers
-        source_files = {
-            file['name']: (file['size'], file['date'])
-            for file in source_data['files']
-        }
-        dest_files = {
-            file['name']: (file['size'], file['date'])
-            for file in dest_data['files']
-        }
+        # Comparer les dossiers
+        for name in source_folders:
+            if name not in dest_folders:
+                to_create.append(name)
+            elif source_folders[name]["date"] != dest_folders[name]["date"]:
+                to_update.append(name)
 
-        for file, (source_size, source_date) in source_files.items():
-            if file not in dest_files:
-                to_create.append(file)
-                nombre_to_create += 1
-            else:
-                dest_size, dest_date = dest_files[file]
-                if source_size != dest_size or source_date != dest_date:
-                    if file == "sync_manifest.json":
-                        to_create.append(file)
-                        nombre_to_create += 1
-                    else:
-                        to_update.append(file)
-                        nombre_to_update += 1
+        # Comparer les fichiers
+        for name in source_files:
+            if name not in dest_files:
+                to_create.append(name)
+            elif (source_files[name]["date"] != dest_files[name]["date"] or
+                  source_files[name]["size"] != dest_files[name]["size"]):
+                to_update.append(name)
 
-        for file in dest_files.keys():
-            if file not in source_files:
-                to_delete.append(file)
-                nombre_to_delete += 1
+        # Trouver les éléments à supprimer
+        for name in dest_folders:
+            if name not in source_folders:
+                to_delete.append(name)
+
+        for name in dest_files:
+            if name not in source_files:
+                to_delete.append(name)
+
+        # Mettre à jour les compteurs
+        nombre_to_create = len(to_create)
+        nombre_to_update = len(to_update)
+        nombre_to_delete = len(to_delete)
 
         # Trier les listes pour une meilleure lisibilité
         to_create.sort()
         to_update.sort()
         to_delete.sort()
 
-        logger.info(
-            f"Comparaison terminée: {nombre_to_create} à créer, {nombre_to_update} à mettre à jour, {nombre_to_delete} à supprimer"
-        )
+        # Journaliser les résultats
+        logger.info(f"=== Résultats de la comparaison ===")
+        logger.info(f"Fichiers à créer ({nombre_to_create}):")
+        for item in to_create:
+            logger.info(f"  - {item}")
+
+        logger.info(f"Fichiers à mettre à jour ({nombre_to_update}):")
+        for item in to_update:
+            logger.info(f"  - {item}")
+
+        logger.info(f"Fichiers à supprimer ({nombre_to_delete}):")
+        for item in to_delete:
+            logger.info(f"  - {item}")
 
     except Exception as e:
-        logger.error(f"Erreur lors de la comparaison des dossiers: {str(e)}")
+        logger.error(f"Erreur lors de la comparaison des JSON: {str(e)}")
         raise
 
 

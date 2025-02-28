@@ -551,6 +551,12 @@ compare_folders() {
 
             log_info "Analyse des différences..."
 
+            # Réinitialiser les compteurs
+            nombre_to_create=0
+            nombre_to_update=0
+            nombre_to_delete=0
+            nombre_to_create_reverse=0
+
             while IFS= read -r line; do
                 [[ -z "$line" ]] && continue
                 [[ "$line" =~ ^building ]] && continue
@@ -568,24 +574,49 @@ compare_folders() {
                     ">f"|">d"|".d")
                         log_info "Nouveau fichier/dossier à créer en sens inverse : $file_name"
                         add_to_array "$file_name" to_create_reverse
+                        ((nombre_to_create_reverse++))
                         ;;
                     "cf"|"cd")
                         log_info "Fichier/dossier à mettre à jour en sens inverse : $file_name"
                         add_to_array "$file_name" to_create_reverse
+                        ((nombre_to_create_reverse++))
                         ;;
                     "*d"|"*f")
                         log_info "Fichier/dossier à supprimer : $file_name"
                         add_to_array "$file_name" to_delete
+                        ((nombre_to_delete++))
                         ;;
                 esac
             done < "$temp_file"
 
             # Supprimer le fichier temporaire
             rm "$temp_file"
+
+            # Créer le JSON de résultat
+            {
+                echo -n "{"
+                echo -n "\"to_create\": [],"
+                echo -n "\"to_update\": [],"
+                echo -n "\"to_delete\": $(array_to_json "${to_delete[@]}"),"
+                echo -n "\"to_create_reverse\": $(array_to_json "${to_create_reverse[@]}"),"
+                echo -n "\"nombre_to_create\": 0,"
+                echo -n "\"nombre_to_update\": 0,"
+                echo -n "\"nombre_to_delete\": $nombre_to_delete,"
+                echo -n "\"nombre_to_create_reverse\": $nombre_to_create_reverse,"
+                echo "\"error\": null}"
+            } > "$output_file"
+
+            log_success "Fichier de résultat généré: $output_file"
             ;;
 
-        "Bidirectionnel")
+        "A idem B"|"Bidirectionnel")
             log_info "Mode de comparaison: Bidirectionnel (miroir)"
+
+            # Réinitialiser les compteurs
+            nombre_to_create=0
+            nombre_to_update=0
+            nombre_to_delete=0
+            nombre_to_create_reverse=0
 
             # Vérifier les changements de A vers B
             temp_file=$(mktemp)
@@ -620,10 +651,12 @@ compare_folders() {
                     ">f"|">d"|".d")
                         log_info "Nouveau fichier/dossier à créer : $file_name"
                         add_to_array "$file_name" to_create
+                        ((nombre_to_create++))
                         ;;
                     "cf"|"cd")
                         log_info "Fichier/dossier à mettre à jour : $file_name"
                         add_to_array "$file_name" to_update
+                        ((nombre_to_update++))
                         ;;
                 esac
             done < "$temp_file"
@@ -664,16 +697,34 @@ compare_folders() {
                     ">f"|">d"|".d")
                         log_info "Nouveau fichier/dossier à créer en sens inverse : $file_name"
                         add_to_array "$file_name" to_create_reverse
+                        ((nombre_to_create_reverse++))
                         ;;
                     "cf"|"cd")
                         log_info "Fichier/dossier à mettre à jour en sens inverse : $file_name"
                         add_to_array "$file_name" to_create_reverse
+                        ((nombre_to_create_reverse++))
                         ;;
                 esac
             done < "$temp_file"
 
             # Supprimer le fichier temporaire
             rm "$temp_file"
+
+            # Créer le JSON de résultat
+            {
+                echo -n "{"
+                echo -n "\"to_create\": $(array_to_json "${to_create[@]}"),"
+                echo -n "\"to_update\": $(array_to_json "${to_update[@]}"),"
+                echo -n "\"to_delete\": [],"
+                echo -n "\"to_bidirectionnel\": $(array_to_json "${to_create_reverse[@]}"),"
+                echo -n "\"nombre_to_create\": $nombre_to_create,"
+                echo -n "\"nombre_to_update\": $nombre_to_update,"
+                echo -n "\"nombre_to_delete\": 0,"
+                echo -n "\"nombre_to_bidirectionnel\": $nombre_to_create_reverse,"
+                echo "\"error\": null}"
+            } > "$output_file"
+
+            log_success "Fichier de résultat généré: $output_file"
             ;;
     esac
 
