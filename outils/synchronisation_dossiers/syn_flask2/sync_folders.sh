@@ -758,11 +758,17 @@ sync_folders() {
     local source_dir=$(convert_path "$1")
     local dest_dir=$(convert_path "$2")
     local mode="$3"
+    local output_file="$4"
 
     log_status "=== DÉBUT DE LA SYNCHRONISATION ==="
     log_info "Mode: $mode"
     log_info "Source: $1 -> $source_dir"
     log_info "Destination: $2 -> $dest_dir"
+
+    if [ -n "$output_file" ]; then
+        log_info "Fichier de configuration: $output_file"
+    fi
+
     log_warning "Vérification des permissions d'accès aux dossiers..."
 
     # Vérifier les permissions avant la synchronisation
@@ -785,6 +791,7 @@ sync_folders() {
                 log_error "Erreur lors de la synchronisation A vers B"
                 return 1
             fi
+            log_success "Synchronisation A vers B terminée avec succès"
             ;;
         "B vers A")
             log_info "Démarrage de la synchronisation B vers A"
@@ -792,17 +799,126 @@ sync_folders() {
                 log_error "Erreur lors de la synchronisation B vers A"
                 return 1
             fi
+            log_success "Synchronisation B vers A terminée avec succès"
             ;;
-        "Bidirectionnel")
+        "A idem B"|"Bidirectionnel")
             log_info "Démarrage de la synchronisation bidirectionnelle"
-            if ! rsync $rsync_opts "$source_dir/" "$dest_dir/"; then
-                log_error "Erreur lors de la synchronisation A vers B"
-                return 1
+
+            # Si un fichier de configuration est fourni, utiliser les résultats de la comparaison
+            if [ -n "$output_file" ] && [ -f "$output_file" ]; then
+                log_info "Utilisation du fichier de configuration pour la synchronisation bidirectionnelle"
+
+                # Extraire les données du fichier JSON
+                if command -v jq &> /dev/null; then
+                    # Lire les données avec jq
+                    local to_create=$(jq -r '.to_create[]' "$output_file" 2>/dev/null | tr '\n' ' ')
+                    local to_update=$(jq -r '.to_update[]' "$output_file" 2>/dev/null | tr '\n' ' ')
+                    local to_bidirectionnel=$(jq -r '.to_bidirectionnel[]' "$output_file" 2>/dev/null | tr '\n' ' ')
+
+                    log_info "Fichiers à créer/mettre à jour (A vers B): $(echo $to_create $to_update | wc -w) élément(s)"
+                    log_info "Fichiers bidirectionnels (B vers A): $(echo $to_bidirectionnel | wc -w) élément(s)"
+
+                    # Synchronisation A vers B pour les fichiers à créer et mettre à jour
+                    if [ -n "$to_create" ] || [ -n "$to_update" ]; then
+                        log_info "Synchronisation A vers B en cours..."
+                        local include_opts=""
+
+                        # Créer un fichier temporaire avec les patterns d'inclusion
+                        local include_file=$(mktemp)
+
+                        # Ajouter les fichiers à créer dans le fichier d'inclusion
+                        for item in $to_create $to_update; do
+                            echo "+ $item" >> "$include_file"
+                            echo "+ $item/**" >> "$include_file"
+                        done
+
+                        # Inclure tout le reste
+                        echo "- *" >> "$include_file"
+
+                        # Afficher le contenu du fichier d'inclusion pour le débogage
+                        log_info "Fichier d'inclusion pour A vers B:"
+                        cat "$include_file" | while read line; do
+                            log_info "  $line"
+                        done
+
+                        # Exécuter rsync avec le fichier d'inclusion
+                        if ! rsync $rsync_opts --include-from="$include_file" "$source_dir/" "$dest_dir/"; then
+                            log_error "Erreur lors de la synchronisation A vers B"
+                            rm -f "$include_file"
+                            return 1
+                        fi
+
+                        rm -f "$include_file"
+                        log_success "Synchronisation A vers B terminée"
+                    else
+                        log_info "Aucun fichier à synchroniser de A vers B"
+                    fi
+
+                    # Synchronisation B vers A pour les fichiers bidirectionnels
+                    if [ -n "$to_bidirectionnel" ]; then
+                        log_info "Synchronisation B vers A en cours..."
+                        local bidi_include_file=$(mktemp)
+
+                        # Ajouter les fichiers bidirectionnels dans le fichier d'inclusion
+                        for item in $to_bidirectionnel; do
+                            echo "+ $item" >> "$bidi_include_file"
+                            echo "+ $item/**" >> "$bidi_include_file"
+                        done
+
+                        # Inclure tout le reste
+                        echo "- *" >> "$bidi_include_file"
+
+                        # Afficher le contenu du fichier d'inclusion pour le débogage
+                        log_info "Fichier d'inclusion pour B vers A:"
+                        cat "$bidi_include_file" | while read line; do
+                            log_info "  $line"
+                        done
+
+                        # Exécuter rsync avec le fichier d'inclusion
+                        if ! rsync $rsync_opts --include-from="$bidi_include_file" "$dest_dir/" "$source_dir/"; then
+                            log_error "Erreur lors de la synchronisation B vers A"
+                            rm -f "$bidi_include_file"
+                            return 1
+                        fi
+
+                        rm -f "$bidi_include_file"
+                        log_success "Synchronisation B vers A terminée"
+                    else
+                        log_info "Aucun fichier à synchroniser de B vers A"
+                    fi
+
+                else
+                    log_error "jq n'est pas installé, impossible de traiter le fichier JSON"
+                    # Utiliser la méthode de base si jq n'est pas disponible
+                    if ! rsync $rsync_opts "$source_dir/" "$dest_dir/"; then
+                        log_error "Erreur lors de la synchronisation A vers B"
+                        return 1
+                    fi
+
+                    if ! rsync $rsync_opts "$dest_dir/" "$source_dir/"; then
+                        log_error "Erreur lors de la synchronisation B vers A"
+                        return 1
+                    fi
+                fi
+            else
+                # Méthode de base sans fichier de configuration
+                log_warning "Aucun fichier de configuration trouvé, utilisation de la méthode par défaut"
+                if ! rsync $rsync_opts "$source_dir/" "$dest_dir/"; then
+                    log_error "Erreur lors de la synchronisation A vers B"
+                    return 1
+                fi
+
+                if ! rsync $rsync_opts "$dest_dir/" "$source_dir/"; then
+                    log_error "Erreur lors de la synchronisation B vers A"
+                    return 1
+                fi
             fi
-            if ! rsync $rsync_opts "$dest_dir/" "$source_dir/"; then
-                log_error "Erreur lors de la synchronisation B vers A"
-                return 1
-            fi
+
+            log_success "Synchronisation bidirectionnelle terminée avec succès"
+            ;;
+        *)
+            log_error "Mode de synchronisation non reconnu: $mode"
+            return 1
             ;;
     esac
 
@@ -818,7 +934,7 @@ case "$1" in
         ;;
     "sync")
         log_info "Lancement de la synchronisation des dossiers"
-        sync_folders "$2" "$3" "$4"
+        sync_folders "$2" "$3" "$4" "$5"
         ;;
     *)
         log_error "Usage: $0 {compare|sync} [arguments]"
