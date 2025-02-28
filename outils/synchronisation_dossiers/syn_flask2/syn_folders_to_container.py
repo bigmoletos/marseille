@@ -8,6 +8,17 @@ import platform
 import sys
 from pathlib import Path
 from typing import List, Dict, Union, Optional
+import tempfile
+
+# Variables globales pour stocker les résultats des comparaisons
+to_create = []
+to_update = []
+to_delete = []
+to_bidirectionnel = []
+nombre_to_create = 0
+nombre_to_update = 0
+nombre_to_delete = 0
+nombre_to_bidirectionnel = 0
 
 # Configuration du logger
 logging.basicConfig(
@@ -16,6 +27,22 @@ logging.basicConfig(
     handlers=[logging.FileHandler('sync.log'),
               logging.StreamHandler()])
 logger = logging.getLogger(__name__)
+
+# Ajouter un niveau "SUCCESS" à logging
+SUCCESS = 25  # Entre INFO (20) et WARNING (30)
+logging.addLevelName(SUCCESS, "SUCCESS")
+
+
+def success(self, message, *args, **kws):
+    """
+    Méthode pour logger des messages de succès (niveau entre INFO et WARNING)
+    """
+    if self.isEnabledFor(SUCCESS):
+        self._log(SUCCESS, message, args, **kws)
+
+
+# Ajouter la méthode au logger
+logging.Logger.success = success
 
 
 class SyncError(Exception):
@@ -98,7 +125,11 @@ def convert_path(path: str) -> str:
         OSError: Si une erreur système survient lors de la conversion
     """
     try:
-        # Si le chemin est déjà au format Git Bash, le retourner tel quel
+        # Si le chemin est vide ou None, retourner tel quel
+        if not path:
+            return path
+
+        # Si le chemin est déjà au format Unix/Linux, le retourner tel quel
         if path.startswith('/'):
             return path
 
@@ -107,21 +138,11 @@ def convert_path(path: str) -> str:
 
         # Si nous sommes sous Windows
         if SYSTEM_INFO['os'] == 'windows':
-            logger.debug(f"Conversion de chemin sous Windows: {path}")
+            logger.debug(f"Conversion de chemin sous Windows natif: {path}")
 
-            # Gérer les chemins réseau avec lettre de lecteur (ex: S:/)
-            if ':' in path:
-                drive_letter = path[0].lower()
-                path_normalized = path[2:].replace('\\', '/').lstrip('/')
-                return f"/mnt/{drive_letter}/{path_normalized}"
-
-            # Gérer les chemins UNC
-            if path.startswith('\\\\'):
-                clean_path = path[2:].replace('\\', '/')
-                return f"/mnt/{clean_path}"
-
-            # Chemin local Windows
-            return os.path.abspath(path)
+            # Pour Windows natif, ne pas convertir en chemin Linux/WSL
+            # Retourner simplement le chemin normalisé
+            return path
 
         # Si nous sommes sous Linux/Unix
         elif SYSTEM_INFO['os'] == 'linux':
@@ -156,7 +177,10 @@ def convert_path(path: str) -> str:
     except Exception as e:
         logger.error(
             f"Erreur lors de la conversion du chemin '{path}': {str(e)}")
-        raise ValueError(f"Impossible de convertir le chemin: {str(e)}")
+        # Ne pas lever d'exception, retourner le chemin d'origine
+        logger.warning(
+            f"Utilisation du chemin d'origine comme fallback: {path}")
+        return path
 
 
 def clean_path(path: str) -> str:
@@ -381,69 +405,60 @@ def get_relative_path(path: str, base_path: str) -> str:
 
 
 def generate_folder_json(dir_path: str) -> str:
-    """Génère une représentation JSON contenant la liste des fichiers et dossiers.
+    """
+    Génère une représentation JSON d'un dossier.
 
     Args:
-        dir_path (str): Chemin du dossier à analyser
+        dir_path (str): Chemin du dossier
 
     Returns:
-        str: Représentation JSON du dossier (chaîne de caractères)
+        str: Représentation JSON du dossier
+
+    Raises:
+        OSError: Si le dossier n'est pas accessible
+        ValueError: Si le chemin est invalide
     """
     try:
-        # Convertir le chemin Windows en chemin compatible WSL si nécessaire
-        if platform.system() == "Linux" and ":" in dir_path:
-            dir_path = convert_path(dir_path)
-
-        if not os.path.exists(dir_path):
-            logger.error(f"Le dossier {dir_path} n'existe pas")
-            return json.dumps({"error": "Le dossier n'existe pas", "folders": [], "files": []})
-
+        # Convertir et nettoyer le chemin
+        dir_path = clean_path(dir_path)
         folders = []
         files = []
 
-        # Lister tous les éléments du dossier
-        for item in os.listdir(dir_path):
-            item_path = os.path.join(dir_path, item)
+        logger.info(f"Génération du JSON pour le dossier: {dir_path}")
 
+        for entry in Path(dir_path).iterdir():
             try:
-                # Obtenir les stats du fichier
-                stats = os.stat(item_path)
-                mtime = int(stats.st_mtime)
-                size = stats.st_size
+                # Utiliser seulement le nom du fichier/dossier
+                name = entry.name
 
-                # Convertir le timestamp en format lisible
-                date_str = datetime.datetime.fromtimestamp(mtime).strftime('%Y%m%d%H%M%S')
-
-                if os.path.isdir(item_path):
-                    folders.append({"name": item, "date": date_str})
-                    logger.debug(f"Dossier trouvé: {item}")
-                else:
+                if entry.is_dir():
+                    folder_date = datetime.datetime.fromtimestamp(
+                        entry.stat().st_mtime).strftime('%Y%m%d%H%M%S')
+                    folders.append({"name": name, "date": folder_date})
+                    logger.debug(f"Dossier ajouté: {name}")
+                elif entry.is_file():
+                    file_date = datetime.datetime.fromtimestamp(
+                        entry.stat().st_mtime).strftime('%Y%m%d%H%M%S')
+                    file_size = entry.stat().st_size
                     files.append({
-                        "name": item,
-                        "date": date_str,
-                        "size": str(size)
+                        "name": name,
+                        "date": file_date,
+                        "size": file_size
                     })
-                    logger.debug(f"Fichier trouvé: {item}")
-
-            except (OSError, PermissionError) as e:
-                logger.warning(f"Erreur lors de l'accès à {item}: {str(e)}")
+                    logger.debug(f"Fichier ajouté: {name}")
+            except Exception as e:
+                logger.warning(
+                    f"Erreur lors du traitement de l'entrée {entry}: {str(e)}")
                 continue
 
-        # Créer le JSON final
-        result = {
-            "folders": sorted(folders, key=lambda x: x["name"]),
-            "files": sorted(files, key=lambda x: x["name"])
-        }
-
-        # Convertir en chaîne JSON
-        json_str = json.dumps(result, indent=2, ensure_ascii=False)
-
-        logger.info(f"JSON généré avec {len(folders)} dossiers et {len(files)} fichiers")
-        return json_str
+        result = json.dumps({"folders": folders, "files": files}, indent=2)
+        logger.debug("Génération du JSON terminée avec succès")
+        return result
 
     except Exception as e:
-        logger.error(f"Erreur lors de la génération du JSON: {str(e)}")
-        return json.dumps({"error": str(e), "folders": [], "files": []})
+        logger.error(
+            f"Erreur lors de la génération du JSON pour {dir_path}: {str(e)}")
+        raise
 
 
 def normalize_path_for_json(path: str) -> str:
@@ -478,85 +493,654 @@ def normalize_path_for_json(path: str) -> str:
         return path
 
 
-def compare_json_folders(source_json: str, dest_json: str) -> None:
-    """Compare deux représentations JSON de dossiers pour déterminer les différences.
+def compare_folders(source_dir: str,
+                    dest_dir: str,
+                    mode: str,
+                    output_file: str,
+                    script_path: str = None) -> None:
+    """
+    Compare deux dossiers selon le mode spécifié.
 
     Args:
-        source_json (str): Représentation JSON du dossier source (chaîne)
-        dest_json (str): Représentation JSON du dossier destination (chaîne)
+        source_dir (str): Chemin du dossier source
+        dest_dir (str): Chemin du dossier destination
+        mode (str): Mode de comparaison ('A vers B', 'B vers A', 'A idem B')
+        output_file (str): Chemin du fichier de sortie JSON
+        script_path (str, optional): Chemin du script bash (non utilisé en natif)
     """
     try:
-        # Charger les données JSON
-        source_data = json.loads(source_json)
-        dest_data = json.loads(dest_json)
+        # Ne pas convertir les chemins en chemins WSL si sous Windows
+        logger.info("=== DÉBUT DE LA COMPARAISON ===")
+        logger.info(f"Mode: {mode}")
+        logger.info(f"Source: {source_dir}")
+        logger.info(f"Destination: {dest_dir}")
+        logger.info(f"Fichier de sortie: {output_file}")
 
-        # Réinitialiser les listes globales
-        global to_create, to_update, to_delete, to_create_reverse, nombre_to_create, nombre_to_update, nombre_to_delete
+        # Vérifier les dépendances
+        if not check_dependencies():
+            error_msg = "Dépendances manquantes pour la comparaison"
+            logger.error(error_msg)
+            try:
+                with open(output_file, 'w', encoding='utf-8') as f:
+                    json.dump({"error": error_msg}, f)
+            except Exception as write_error:
+                logger.error(
+                    f"Erreur lors de l'écriture du fichier de sortie: {str(write_error)}"
+                )
+            raise SyncError(error_msg)
+
+        # Vérifier l'existence des dossiers
+        valid_source, source_error = check_path(source_dir, "Source")
+        valid_dest, dest_error = check_path(dest_dir, "Destination")
+
+        if not valid_source or not valid_dest:
+            error_msg = source_error if not valid_source else dest_error
+            logger.error(error_msg)
+            try:
+                with open(output_file, 'w', encoding='utf-8') as f:
+                    json.dump({"error": error_msg}, f)
+            except Exception as write_error:
+                logger.error(
+                    f"Erreur lors de l'écriture du fichier de sortie: {str(write_error)}"
+                )
+            raise SyncError(error_msg)
+
+        # Préparer les chemins pour rsync
+        rsync_source_dir = prepare_path_for_rsync(source_dir)
+        rsync_dest_dir = prepare_path_for_rsync(dest_dir)
+
+        logger.info(f"Chemin source préparé pour rsync: {rsync_source_dir}")
+        logger.info(f"Chemin destination préparé pour rsync: {rsync_dest_dir}")
+
+        # Réinitialiser les variables globales
+        global to_create, to_update, to_delete, to_bidirectionnel
+        global nombre_to_create, nombre_to_update, nombre_to_delete, nombre_to_bidirectionnel
         to_create = []
         to_update = []
         to_delete = []
-        to_create_reverse = []
+        to_bidirectionnel = []
+        nombre_to_create = 0
+        nombre_to_update = 0
+        nombre_to_delete = 0
+        nombre_to_bidirectionnel = 0
 
-        logger.info("Début de la comparaison des fichiers JSON")
-        logger.info(f"Nombre de fichiers trouvés - Source: {len(source_data['folders']) + len(source_data['files'])}, Destination: {len(dest_data['folders']) + len(dest_data['files'])}")
+        if mode == "A vers B":
+            logger.info("Mode de comparaison: A vers B (sauvegarde)")
+            try:
+                # Utiliser rsync pour identifier les différences
+                temp_file = tempfile.NamedTemporaryFile(delete=False)
+                temp_file.close()
 
-        # Créer des dictionnaires pour un accès plus rapide
-        source_folders = {item["name"]: item for item in source_data["folders"]}
-        source_files = {item["name"]: item for item in source_data["files"]}
-        dest_folders = {item["name"]: item for item in dest_data["folders"]}
-        dest_files = {item["name"]: item for item in dest_data["files"]}
+                # Commande rsync avec options pour afficher changements (--itemize-changes)
+                rsync_cmd = [
+                    "rsync", "-ain", "--delete", f"{rsync_source_dir}/",
+                    f"{rsync_dest_dir}/"
+                ]
+                logger.debug(f"Exécution de la commande rsync: {' '.join(rsync_cmd)}")
 
-        # Comparer les dossiers
-        for name in source_folders:
-            if name not in dest_folders:
-                to_create.append(name)
-            elif source_folders[name]["date"] != dest_folders[name]["date"]:
-                to_update.append(name)
+                with open(temp_file.name, 'w', encoding='utf-8') as f:
+                    try:
+                        subprocess.run(rsync_cmd,
+                                  stdout=f,
+                                  stderr=subprocess.PIPE,
+                                  text=True,
+                                  check=True)
+                    except subprocess.CalledProcessError as e:
+                        logger.error(f"Erreur rsync: {e.stderr}")
+                        raise SyncError(f"Erreur lors de l'exécution de rsync: {e.stderr}")
 
-        # Comparer les fichiers
-        for name in source_files:
-            if name not in dest_files:
-                to_create.append(name)
-            elif (source_files[name]["date"] != dest_files[name]["date"] or
-                  source_files[name]["size"] != dest_files[name]["size"]):
-                to_update.append(name)
+                # Traiter la sortie de rsync
+                with open(temp_file.name, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith('building') or line.startswith(
+                                'sending') or line.startswith('sent') or line.startswith(
+                                    'total'):
+                            continue
 
-        # Trouver les éléments à supprimer
-        for name in dest_folders:
-            if name not in source_folders:
-                to_delete.append(name)
+                        # Extraire le type de changement et le nom du fichier
+                        change_type = line[0:2].strip()
+                        file_name = line[8:].strip() if len(line) > 8 else ""
 
-        for name in dest_files:
-            if name not in source_files:
-                to_delete.append(name)
+                        if not file_name:
+                            continue
 
-        # Mettre à jour les compteurs
-        nombre_to_create = len(to_create)
-        nombre_to_update = len(to_update)
-        nombre_to_delete = len(to_delete)
+                        logger.debug(f"Changement détecté: [{change_type}] [{file_name}]")
 
-        # Trier les listes pour une meilleure lisibilité
-        to_create.sort()
-        to_update.sort()
-        to_delete.sort()
+                        if change_type.startswith(">"):
+                            # Nouveau fichier à créer
+                            to_create.append(file_name)
+                            nombre_to_create += 1
+                            logger.info(f"À créer: {file_name}")
+                        elif change_type.startswith("c"):
+                            # Fichier à mettre à jour
+                            to_update.append(file_name)
+                            nombre_to_update += 1
+                            logger.info(f"À mettre à jour: {file_name}")
+                        elif change_type.startswith("*"):
+                            # Fichier à supprimer
+                            to_delete.append(file_name)
+                            nombre_to_delete += 1
+                            logger.info(f"À supprimer: {file_name}")
 
-        # Journaliser les résultats
-        logger.info(f"=== Résultats de la comparaison ===")
-        logger.info(f"Fichiers à créer ({nombre_to_create}):")
-        for item in to_create:
-            logger.info(f"  - {item}")
+                # Nettoyer le fichier temporaire
+                os.unlink(temp_file.name)
 
-        logger.info(f"Fichiers à mettre à jour ({nombre_to_update}):")
-        for item in to_update:
-            logger.info(f"  - {item}")
+            except Exception as e:
+                logger.error(f"Erreur lors de la comparaison: {str(e)}")
+                raise
 
-        logger.info(f"Fichiers à supprimer ({nombre_to_delete}):")
-        for item in to_delete:
-            logger.info(f"  - {item}")
+        elif mode == "B vers A":
+            logger.info("Mode de comparaison: B vers A (restauration)")
+            try:
+                # Utiliser rsync pour identifier les différences
+                temp_file = tempfile.NamedTemporaryFile(delete=False)
+                temp_file.close()
+
+                rsync_cmd = [
+                    "rsync", "-ain", "--delete", f"{rsync_dest_dir}/",
+                    f"{rsync_source_dir}/"
+                ]
+                logger.debug(f"Exécution de la commande rsync: {' '.join(rsync_cmd)}")
+
+                with open(temp_file.name, 'w', encoding='utf-8') as f:
+                    try:
+                        subprocess.run(rsync_cmd,
+                                  stdout=f,
+                                  stderr=subprocess.PIPE,
+                                  text=True,
+                                  check=True)
+                    except subprocess.CalledProcessError as e:
+                        logger.error(f"Erreur rsync: {e.stderr}")
+                        raise SyncError(f"Erreur lors de l'exécution de rsync: {e.stderr}")
+
+                # Traiter la sortie de rsync
+                with open(temp_file.name, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith('building') or line.startswith(
+                                'sending') or line.startswith('sent') or line.startswith(
+                                    'total'):
+                            continue
+
+                        # Extraire le type de changement et le nom du fichier
+                        change_type = line[0:2].strip()
+                        file_name = line[8:].strip() if len(line) > 8 else ""
+
+                        if not file_name:
+                            continue
+
+                        logger.debug(f"Changement détecté: [{change_type}] [{file_name}]")
+
+                        if change_type.startswith(">"):
+                            # Nouveau fichier à créer en sens inverse
+                            to_bidirectionnel.append(file_name)
+                            nombre_to_bidirectionnel += 1
+                            logger.info(f"À créer en sens inverse: {file_name}")
+                        elif change_type.startswith("c"):
+                            # Fichier à mettre à jour en sens inverse
+                            to_bidirectionnel.append(file_name)
+                            nombre_to_bidirectionnel += 1
+                            logger.info(f"À mettre à jour en sens inverse: {file_name}")
+                        elif change_type.startswith("*"):
+                            # Fichier à supprimer
+                            to_delete.append(file_name)
+                            nombre_to_delete += 1
+                            logger.info(f"À supprimer: {file_name}")
+
+                # Nettoyer le fichier temporaire
+                os.unlink(temp_file.name)
+
+            except Exception as e:
+                logger.error(f"Erreur lors de la comparaison: {str(e)}")
+                raise
+
+        elif mode == "A idem B" or mode == "Bidirectionnel":
+            logger.info("Mode de comparaison: Bidirectionnel (miroir)")
+            try:
+                # 1. Comparaison A vers B
+                temp_file_ab = tempfile.NamedTemporaryFile(delete=False)
+                temp_file_ab.close()
+
+                rsync_cmd_ab = [
+                    "rsync", "-ain", f"{rsync_source_dir}/", f"{rsync_dest_dir}/"
+                ]
+                logger.debug(f"Exécution de la commande rsync A->B: {' '.join(rsync_cmd_ab)}")
+
+                with open(temp_file_ab.name, 'w', encoding='utf-8') as f:
+                    try:
+                        subprocess.run(rsync_cmd_ab,
+                                  stdout=f,
+                                  stderr=subprocess.PIPE,
+                                  text=True,
+                                  check=True)
+                    except subprocess.CalledProcessError as e:
+                        logger.error(f"Erreur rsync A->B: {e.stderr}")
+                        raise SyncError(f"Erreur lors de l'exécution de rsync A->B: {e.stderr}")
+
+                # Traiter la sortie de rsync A->B
+                with open(temp_file_ab.name, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith('building') or line.startswith(
+                                'sending') or line.startswith('sent') or line.startswith(
+                                    'total'):
+                            continue
+
+                        # Extraire le type de changement et le nom du fichier
+                        change_type = line[0:2].strip()
+                        file_name = line[8:].strip() if len(line) > 8 else ""
+
+                        if not file_name:
+                            continue
+
+                        logger.debug(f"Changement A->B détecté: [{change_type}] [{file_name}]")
+
+                        if change_type.startswith(">"):
+                            # Nouveau fichier à créer
+                            to_create.append(file_name)
+                            nombre_to_create += 1
+                            logger.info(f"À créer: {file_name}")
+                        elif change_type.startswith("c"):
+                            # Fichier à mettre à jour
+                            to_update.append(file_name)
+                            nombre_to_update += 1
+                            logger.info(f"À mettre à jour: {file_name}")
+
+                # 2. Comparaison B vers A
+                temp_file_ba = tempfile.NamedTemporaryFile(delete=False)
+                temp_file_ba.close()
+
+                rsync_cmd_ba = [
+                    "rsync", "-ain", f"{rsync_dest_dir}/", f"{rsync_source_dir}/"
+                ]
+                logger.debug(f"Exécution de la commande rsync B->A: {' '.join(rsync_cmd_ba)}")
+
+                with open(temp_file_ba.name, 'w', encoding='utf-8') as f:
+                    try:
+                        subprocess.run(rsync_cmd_ba,
+                                  stdout=f,
+                                  stderr=subprocess.PIPE,
+                                  text=True,
+                                  check=True)
+                    except subprocess.CalledProcessError as e:
+                        logger.error(f"Erreur rsync B->A: {e.stderr}")
+                        raise SyncError(f"Erreur lors de l'exécution de rsync B->A: {e.stderr}")
+
+                # Traiter la sortie de rsync B->A
+                with open(temp_file_ba.name, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith('building') or line.startswith(
+                                'sending') or line.startswith('sent') or line.startswith(
+                                    'total'):
+                            continue
+
+                        # Extraire le type de changement et le nom du fichier
+                        change_type = line[0:2].strip()
+                        file_name = line[8:].strip() if len(line) > 8 else ""
+
+                        if not file_name:
+                            continue
+
+                        logger.debug(f"Changement B->A détecté: [{change_type}] [{file_name}]")
+
+                        if change_type.startswith(">") or change_type.startswith("c"):
+                            # Fichier à synchroniser de B vers A
+                            to_bidirectionnel.append(file_name)
+                            nombre_to_bidirectionnel += 1
+                            logger.info(f"À synchroniser de B vers A: {file_name}")
+
+                # Nettoyer les fichiers temporaires
+                os.unlink(temp_file_ab.name)
+                os.unlink(temp_file_ba.name)
+
+            except Exception as e:
+                logger.error(f"Erreur lors de la comparaison bidirectionnelle: {str(e)}")
+                raise
+
+        # Créer le résultat JSON
+        result = {
+            "error": None,
+            "source_dir": source_dir,
+            "dest_dir": dest_dir,
+            "mode": mode,
+            "to_create": to_create,
+            "to_update": to_update,
+            "to_delete": to_delete,
+            "to_bidirectionnel": to_bidirectionnel,
+            "nombre_to_create": nombre_to_create,
+            "nombre_to_update": nombre_to_update,
+            "nombre_to_delete": nombre_to_delete,
+            "nombre_to_bidirectionnel": nombre_to_bidirectionnel
+        }
+
+        # Écrire le fichier JSON
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(result, f, indent=2)
+
+        logger.success(f"Comparaison terminée. Résultat enregistré dans {output_file}")
+        logger.info(f"Éléments à créer: {nombre_to_create}")
+        logger.info(f"Éléments à mettre à jour: {nombre_to_update}")
+        logger.info(f"Éléments à supprimer: {nombre_to_delete}")
+        logger.info(f"Éléments bidirectionnels: {nombre_to_bidirectionnel}")
 
     except Exception as e:
-        logger.error(f"Erreur lors de la comparaison des JSON: {str(e)}")
-        raise
+        error_msg = f"Erreur lors de la comparaison: {str(e)}"
+        logger.error(error_msg)
+        try:
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump({"error": str(e)}, f)
+        except Exception as write_error:
+            logger.error(
+                f"Erreur lors de l'écriture du fichier d'erreur: {str(write_error)}"
+            )
+        raise SyncError(error_msg)
+
+
+def sync_folders(source_dir: str,
+                 dest_dir: str,
+                 mode: str,
+                 output_file: str = "sync_results.json",
+                 script_path: str = None) -> None:
+    """
+    Synchronise deux dossiers selon le mode spécifié.
+
+    Args:
+        source_dir (str): Chemin du dossier source
+        dest_dir (str): Chemin du dossier destination
+        mode (str): Mode de synchronisation ('A vers B', 'B vers A', 'A idem B')
+        output_file (str, optional): Chemin du fichier de sortie JSON. Defaults to "sync_results.json".
+        script_path (str, optional): Chemin du script bash. Si None, utilise le script au même niveau.
+    """
+    try:
+        # Ne pas convertir systématiquement les chemins
+        logger.info("=== DÉBUT DE LA SYNCHRONISATION ===")
+        logger.info(f"Mode: {mode}")
+        logger.info(f"Source: {source_dir}")
+        logger.info(f"Destination: {dest_dir}")
+        logger.info(f"Fichier de sortie: {output_file}")
+
+        # Vérifier que les dossiers existent et sont accessibles
+        valid_source, source_error = check_path(source_dir, "Source")
+        valid_dest, dest_error = check_path(dest_dir, "Destination")
+
+        if not valid_source or not valid_dest:
+            error_msg = source_error if not valid_source else dest_error
+            logger.error(error_msg)
+            raise SyncError(error_msg)
+
+        # Préparer les chemins pour rsync
+        rsync_source_dir = prepare_path_for_rsync(source_dir)
+        rsync_dest_dir = prepare_path_for_rsync(dest_dir)
+
+        logger.info(f"Chemin source préparé pour rsync: {rsync_source_dir}")
+        logger.info(f"Chemin destination préparé pour rsync: {rsync_dest_dir}")
+
+        # Si un fichier de résultat de comparaison est fourni
+        sync_result = {
+            "status": "success",
+            "error": None,
+            "source_dir": source_dir,
+            "dest_dir": dest_dir,
+            "mode": mode,
+            "files_created": [],
+            "files_updated": [],
+            "files_deleted": []
+        }
+
+        # Vérifier si on a des données de comparaison
+        comparison_data = None
+        if os.path.exists(output_file):
+            try:
+                with open(output_file, 'r', encoding='utf-8') as f:
+                    comparison_data = json.load(f)
+                    logger.info(f"Données de comparaison chargées depuis {output_file}")
+            except Exception as e:
+                logger.warning(f"Impossible de charger les données de comparaison: {str(e)}")
+
+        if mode == "A vers B":
+            logger.info("Mode de synchronisation: A vers B (sauvegarde)")
+
+            if comparison_data:
+                # Utiliser les résultats de la comparaison
+                to_create = comparison_data.get("to_create", [])
+                to_update = comparison_data.get("to_update", [])
+                to_delete = comparison_data.get("to_delete", [])
+
+                # Synchronisation des fichiers à créer et mettre à jour
+                if to_create or to_update:
+                    logger.info(f"Synchronisation de {len(to_create) + len(to_update)} éléments à créer/mettre à jour")
+
+                    # Créer un fichier d'inclusion pour rsync
+                    include_file = tempfile.NamedTemporaryFile(delete=False, mode='w')
+                    for item in to_create + to_update:
+                        include_file.write(f"+ {item}\n")
+                        include_file.write(f"+ {item}/**\n")
+                    include_file.write("- *\n")
+                    include_file.close()
+
+                    # Exécuter rsync avec le fichier d'inclusion
+                    rsync_cmd = [
+                        "rsync", "-rtlv", "--progress", f"--include-from={include_file.name}",
+                        f"{rsync_source_dir}/", f"{rsync_dest_dir}/"
+                    ]
+                    logger.debug(f"Exécution de la commande rsync (créer/mettre à jour): {' '.join(rsync_cmd)}")
+
+                    try:
+                        subprocess.run(rsync_cmd, check=True, text=True, capture_output=True)
+                        sync_result["files_created"] = to_create
+                        sync_result["files_updated"] = to_update
+                    except subprocess.CalledProcessError as e:
+                        logger.error(f"Erreur rsync (créer/mettre à jour): {e.stderr}")
+                        raise SyncError(f"Erreur lors de la synchronisation (créer/mettre à jour): {e.stderr}")
+                    finally:
+                        os.unlink(include_file.name)
+
+                # Suppression des fichiers si nécessaire
+                if to_delete:
+                    logger.info(f"Suppression de {len(to_delete)} éléments")
+                    for item in to_delete:
+                        path_to_delete = os.path.join(dest_dir, item)
+                        if os.path.exists(path_to_delete):
+                            try:
+                                if os.path.isfile(path_to_delete):
+                                    os.remove(path_to_delete)
+                                    logger.info(f"Fichier supprimé: {item}")
+                                elif os.path.isdir(path_to_delete):
+                                    shutil.rmtree(path_to_delete)
+                                    logger.info(f"Dossier supprimé: {item}")
+                                sync_result["files_deleted"].append(item)
+                            except Exception as e:
+                                logger.error(f"Erreur lors de la suppression de {item}: {str(e)}")
+            else:
+                # Synchronisation directe avec rsync
+                logger.info("Synchronisation directe avec rsync (pas de données de comparaison)")
+                rsync_cmd = [
+                    "rsync", "-rtlv", "--progress", "--delete",
+                    f"{rsync_source_dir}/", f"{rsync_dest_dir}/"
+                ]
+                logger.debug(f"Exécution de la commande rsync: {' '.join(rsync_cmd)}")
+
+                try:
+                    subprocess.run(rsync_cmd, check=True, text=True, capture_output=True)
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"Erreur rsync: {e.stderr}")
+                    raise SyncError(f"Erreur lors de la synchronisation: {e.stderr}")
+
+        elif mode == "B vers A":
+            logger.info("Mode de synchronisation: B vers A (restauration)")
+
+            if comparison_data:
+                # Utiliser les résultats de la comparaison
+                to_bidirectionnel = comparison_data.get("to_bidirectionnel", [])
+                to_delete = comparison_data.get("to_delete", [])
+
+                # Synchronisation des fichiers à créer et mettre à jour
+                if to_bidirectionnel:
+                    logger.info(f"Synchronisation de {len(to_bidirectionnel)} éléments à créer/mettre à jour")
+
+                    # Créer un fichier d'inclusion pour rsync
+                    include_file = tempfile.NamedTemporaryFile(delete=False, mode='w')
+                    for item in to_bidirectionnel:
+                        include_file.write(f"+ {item}\n")
+                        include_file.write(f"+ {item}/**\n")
+                    include_file.write("- *\n")
+                    include_file.close()
+
+                    # Exécuter rsync avec le fichier d'inclusion
+                    rsync_cmd = [
+                        "rsync", "-rtlv", "--progress", f"--include-from={include_file.name}",
+                        f"{rsync_dest_dir}/", f"{rsync_source_dir}/"
+                    ]
+                    logger.debug(f"Exécution de la commande rsync (créer/mettre à jour): {' '.join(rsync_cmd)}")
+
+                    try:
+                        subprocess.run(rsync_cmd, check=True, text=True, capture_output=True)
+                        sync_result["files_created"] = to_bidirectionnel
+                    except subprocess.CalledProcessError as e:
+                        logger.error(f"Erreur rsync (créer/mettre à jour): {e.stderr}")
+                        raise SyncError(f"Erreur lors de la synchronisation (créer/mettre à jour): {e.stderr}")
+                    finally:
+                        os.unlink(include_file.name)
+
+                # Suppression des fichiers si nécessaire
+                if to_delete:
+                    logger.info(f"Suppression de {len(to_delete)} éléments")
+                    for item in to_delete:
+                        path_to_delete = os.path.join(source_dir, item)
+                        if os.path.exists(path_to_delete):
+                            try:
+                                if os.path.isfile(path_to_delete):
+                                    os.remove(path_to_delete)
+                                    logger.info(f"Fichier supprimé: {item}")
+                                elif os.path.isdir(path_to_delete):
+                                    shutil.rmtree(path_to_delete)
+                                    logger.info(f"Dossier supprimé: {item}")
+                                sync_result["files_deleted"].append(item)
+                            except Exception as e:
+                                logger.error(f"Erreur lors de la suppression de {item}: {str(e)}")
+            else:
+                # Synchronisation directe avec rsync
+                logger.info("Synchronisation directe avec rsync (pas de données de comparaison)")
+                rsync_cmd = [
+                    "rsync", "-rtlv", "--progress", "--delete",
+                    f"{rsync_dest_dir}/", f"{rsync_source_dir}/"
+                ]
+                logger.debug(f"Exécution de la commande rsync: {' '.join(rsync_cmd)}")
+
+                try:
+                    subprocess.run(rsync_cmd, check=True, text=True, capture_output=True)
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"Erreur rsync: {e.stderr}")
+                    raise SyncError(f"Erreur lors de la synchronisation: {e.stderr}")
+
+        elif mode == "A idem B" or mode == "Bidirectionnel":
+            logger.info("Mode de synchronisation: Bidirectionnel (miroir)")
+
+            if comparison_data:
+                # Utiliser les résultats de la comparaison
+                to_create = comparison_data.get("to_create", [])
+                to_update = comparison_data.get("to_update", [])
+                to_bidirectionnel = comparison_data.get("to_bidirectionnel", [])
+
+                # 1. Synchronisation A vers B
+                if to_create or to_update:
+                    logger.info(f"Synchronisation A vers B: {len(to_create) + len(to_update)} éléments")
+
+                    # Créer un fichier d'inclusion pour rsync
+                    include_file_ab = tempfile.NamedTemporaryFile(delete=False, mode='w')
+                    for item in to_create + to_update:
+                        include_file_ab.write(f"+ {item}\n")
+                        include_file_ab.write(f"+ {item}/**\n")
+                    include_file_ab.write("- *\n")
+                    include_file_ab.close()
+
+                    # Exécuter rsync avec le fichier d'inclusion
+                    rsync_cmd_ab = [
+                        "rsync", "-rtlv", "--progress", f"--include-from={include_file_ab.name}",
+                        f"{rsync_source_dir}/", f"{rsync_dest_dir}/"
+                    ]
+                    logger.debug(f"Exécution de la commande rsync A->B: {' '.join(rsync_cmd_ab)}")
+
+                    try:
+                        subprocess.run(rsync_cmd_ab, check=True, text=True, capture_output=True)
+                        sync_result["files_created"] = to_create
+                        sync_result["files_updated"] = to_update
+                    except subprocess.CalledProcessError as e:
+                        logger.error(f"Erreur rsync A->B: {e.stderr}")
+                        raise SyncError(f"Erreur lors de la synchronisation A->B: {e.stderr}")
+                    finally:
+                        os.unlink(include_file_ab.name)
+
+                # 2. Synchronisation B vers A
+                if to_bidirectionnel:
+                    logger.info(f"Synchronisation B vers A: {len(to_bidirectionnel)} éléments")
+
+                    # Créer un fichier d'inclusion pour rsync
+                    include_file_ba = tempfile.NamedTemporaryFile(delete=False, mode='w')
+                    for item in to_bidirectionnel:
+                        include_file_ba.write(f"+ {item}\n")
+                        include_file_ba.write(f"+ {item}/**\n")
+                    include_file_ba.write("- *\n")
+                    include_file_ba.close()
+
+                    # Exécuter rsync avec le fichier d'inclusion
+                    rsync_cmd_ba = [
+                        "rsync", "-rtlv", "--progress", f"--include-from={include_file_ba.name}",
+                        f"{rsync_dest_dir}/", f"{rsync_source_dir}/"
+                    ]
+                    logger.debug(f"Exécution de la commande rsync B->A: {' '.join(rsync_cmd_ba)}")
+
+                    try:
+                        subprocess.run(rsync_cmd_ba, check=True, text=True, capture_output=True)
+                        sync_result["files_bidirectional"] = to_bidirectionnel
+                    except subprocess.CalledProcessError as e:
+                        logger.error(f"Erreur rsync B->A: {e.stderr}")
+                        raise SyncError(f"Erreur lors de la synchronisation B->A: {e.stderr}")
+                    finally:
+                        os.unlink(include_file_ba.name)
+            else:
+                # Synchronisation bidirectionnelle directe
+                logger.info("Synchronisation bidirectionnelle directe (pas de données de comparaison)")
+
+                # Synchronisation A vers B
+                rsync_cmd_ab = [
+                    "rsync", "-rtlv", "--progress",
+                    f"{rsync_source_dir}/", f"{rsync_dest_dir}/"
+                ]
+                logger.debug(f"Exécution de la commande rsync A->B: {' '.join(rsync_cmd_ab)}")
+
+                try:
+                    subprocess.run(rsync_cmd_ab, check=True, text=True, capture_output=True)
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"Erreur rsync A->B: {e.stderr}")
+                    raise SyncError(f"Erreur lors de la synchronisation A->B: {e.stderr}")
+
+                # Synchronisation B vers A
+                rsync_cmd_ba = [
+                    "rsync", "-rtlv", "--progress",
+                    f"{rsync_dest_dir}/", f"{rsync_source_dir}/"
+                ]
+                logger.debug(f"Exécution de la commande rsync B->A: {' '.join(rsync_cmd_ba)}")
+
+                try:
+                    subprocess.run(rsync_cmd_ba, check=True, text=True, capture_output=True)
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"Erreur rsync B->A: {e.stderr}")
+                    raise SyncError(f"Erreur lors de la synchronisation B->A: {e.stderr}")
+
+        # Sauvegarder le résultat de la synchronisation
+        sync_result_file = os.path.join(os.path.dirname(output_file), "sync_result.json")
+        with open(sync_result_file, 'w', encoding='utf-8') as f:
+            json.dump(sync_result, f, indent=2)
+
+        logger.success(f"Synchronisation terminée avec succès. Résultat enregistré dans {sync_result_file}")
+
+    except Exception as e:
+        error_msg = f"Erreur lors de la synchronisation: {str(e)}"
+        logger.error(error_msg)
+        raise SyncError(error_msg)
 
 
 def check_path(path: str, description: str) -> tuple[bool, str]:
@@ -573,10 +1157,7 @@ def check_path(path: str, description: str) -> tuple[bool, str]:
             - message d'erreur: Message explicatif si non valide, chaîne vide si valide
     """
     try:
-        # Convertir le chemin selon l'OS
-        path = convert_path(path)
-
-        # Vérifier l'existence
+        # Vérifier l'existence (sans conversion préalable)
         if not os.path.exists(path):
             error_msg = f"ERREUR: {description} n'existe pas: {path}"
             logger.error(error_msg)
@@ -605,227 +1186,33 @@ def check_path(path: str, description: str) -> tuple[bool, str]:
         return False, error_msg
 
 
-def compare_folders(source_dir: str,
-                    dest_dir: str,
-                    mode: str,
-                    output_file: str,
-                    script_path: str = None) -> None:
+def prepare_path_for_rsync(path: str) -> str:
     """
-    Compare deux dossiers et génère un fichier JSON avec les différences.
+    Prépare un chemin pour être utilisé avec rsync.
+    Si nécessaire sous Windows, convertit le format du chemin.
 
     Args:
-        source_dir (str): Chemin du dossier source
-        dest_dir (str): Chemin du dossier destination
-        mode (str): Mode de comparaison ('A vers B', 'B vers A', 'A idem B')
-        output_file (str): Chemin du fichier de sortie JSON
-        script_path (str, optional): Chemin du script bash. Si None, utilise le script au même niveau.
+        path (str): Chemin à préparer
 
-    Raises:
-        SyncError: Si une erreur survient pendant la comparaison
+    Returns:
+        str: Chemin préparé pour rsync
     """
     try:
-        logger.info("=== DÉBUT DE LA COMPARAISON ===")
-        logger.info(f"Mode: {mode}")
-        logger.info(f"Source: {source_dir}")
-        logger.info(f"Destination: {dest_dir}")
-        logger.info(f"Fichier de sortie: {output_file}")
+        # Si nous sommes sous Windows et que le chemin contient un lecteur (e.g., C:)
+        if SYSTEM_INFO['os'] == 'windows' and ':' in path:
+            # Utiliser le format cygwin/msys pour rsync
+            drive_letter = path[0].lower()
+            path_normalized = path[2:].replace('\\', '/')
+            return f"/cygdrive/{drive_letter}/{path_normalized}"
 
-        # Vérifier les dépendances
-        if not check_dependencies():
-            raise SyncError("Impossible d'installer les dépendances")
-
-        # Convertir et vérifier les chemins
-        source_dir = convert_path(source_dir)
-        dest_dir = convert_path(dest_dir)
-        output_file = convert_path(output_file)
-
-        if not check_path(source_dir, "Source") or not check_path(
-                dest_dir, "Destination"):
-            raise SyncError(
-                "Un des dossiers n'existe pas ou n'est pas accessible")
-
-        # Utiliser le script bash au même niveau que ce fichier si non spécifié
-        if script_path is None:
-            script_path = os.path.join(os.path.dirname(__file__),
-                                       "sync_folders.sh")
-
-        script_path = convert_path(script_path)
-        script_dir = os.path.dirname(script_path)
-
-        # Vérifier que le script existe
-        if not os.path.isfile(script_path):
-            raise SyncError(f"Le script {script_path} n'existe pas")
-
-        # Rendre le script exécutable
-        try:
-            os.chmod(script_path, 0o755)
-            logger.info(f"Script {script_path} rendu exécutable")
-        except Exception as e:
-            logger.error(f"Erreur lors du chmod +x: {str(e)}")
-            raise
-
-        # Exécuter le script bash pour la comparaison
-        script_name = os.path.basename(script_path)
-
-        # Construire la commande avec les chemins convertis
-        cmd = f'cd "{script_dir}" && chmod +x "{script_name}" && ./{script_name} compare "{source_dir}" "{dest_dir}" "{mode}" "{output_file}"'
-        logger.info(f"Commande à exécuter: {cmd}")
-
-        # Exécuter la commande
-        env = os.environ.copy()
-        env["PATH"] = "/usr/bin:" + env.get("PATH", "")
-
-        result = subprocess.run(cmd,
-                                shell=True,
-                                capture_output=True,
-                                text=True,
-                                env=env)
-
-        # Afficher la sortie standard et d'erreur pour le débogage
-        if result.stdout:
-            logger.info(f"Sortie standard:\n{result.stdout}")
-        if result.stderr:
-            logger.error(f"Sortie d'erreur:\n{result.stderr}")
-
-        if result.returncode != 0:
-            error_msg = f"Erreur lors de la comparaison (code {result.returncode}): {result.stderr}"
-            logger.error(error_msg)
-            raise SyncError(error_msg)
-
-        # Vérifier que le fichier de sortie a été créé
-        if not os.path.isfile(output_file):
-            raise SyncError(
-                f"Le fichier de sortie {output_file} n'a pas été créé")
-
-        logger.info("=== COMPARAISON TERMINÉE ===")
+        # Normaliser les séparateurs pour rsync (toujours forward slash)
+        return path.replace('\\', '/')
 
     except Exception as e:
-        error_msg = f"Erreur lors de la comparaison: {str(e)}"
-        logger.error(error_msg)
-        # Sauvegarder l'erreur dans le fichier de sortie
-        try:
-            with open(output_file, 'w', encoding='utf-8') as f:
-                json.dump({"error": error_msg}, f, indent=2)
-        except Exception as write_error:
-            logger.error(
-                f"Erreur lors de l'écriture du fichier d'erreur: {str(write_error)}"
-            )
-        raise SyncError(error_msg)
-
-
-def sync_folders(source_dir: str,
-                 dest_dir: str,
-                 mode: str,
-                 output_file: str = "sync_results.json",
-                 script_path: str = None) -> None:
-    """
-    Synchronise deux dossiers selon le mode spécifié.
-
-    Args:
-        source_dir (str): Chemin du dossier source
-        dest_dir (str): Chemin du dossier destination
-        mode (str): Mode de synchronisation ('A vers B', 'B vers A', 'A idem B')
-        output_file (str, optional): Chemin du fichier de sortie JSON. Defaults to "sync_results.json".
-        script_path (str, optional): Chemin du script bash. Si None, utilise le script au même niveau.
-    """
-    try:
-        # Convertir tous les chemins
-        source_dir = convert_path(source_dir)
-        dest_dir = convert_path(dest_dir)
-        output_file = convert_path(output_file)
-
-        log("=== DÉBUT DE LA SYNCHRONISATION ===")
-        log(f"Mode: {mode}")
-        log(f"Source: {source_dir}")
-        log(f"Destination: {dest_dir}")
-        log(f"Fichier de sortie: {output_file}")
-
-        # Utiliser le script bash au même niveau que ce fichier si non spécifié
-        if script_path is None:
-            script_path = os.path.join(os.path.dirname(__file__),
-                                       "sync_folders.sh")
-
-        script_path = convert_path(script_path)
-        script_dir = os.path.dirname(script_path)
-
-        # Vérifier que le script existe
-        if not os.path.isfile(script_path):
-            raise SyncError(f"Le script {script_path} n'existe pas")
-
-        # Rendre le script exécutable
-        try:
-            os.chmod(script_path, 0o755)
-            logger.info(f"Script {script_path} rendu exécutable")
-        except Exception as e:
-            logger.error(f"Erreur lors du chmod +x: {str(e)}")
-            raise
-
-        # Exécuter le script bash pour la synchronisation
-        script_name = os.path.basename(script_path)
-
-        # Construire la commande avec les chemins convertis
-        cmd = f'cd "{script_dir}" && chmod +x "{script_name}" && ./{script_name} sync "{source_dir}" "{dest_dir}" "{mode}" "{output_file}"'
-        logger.info(f"Commande à exécuter: {cmd}")
-
-        # Exécuter la commande
-        env = os.environ.copy()
-        env["PATH"] = "/usr/bin:" + env.get("PATH", "")
-
-        result = subprocess.run(cmd,
-                                shell=True,
-                                capture_output=True,
-                                text=True,
-                                env=env)
-
-        # Afficher la sortie standard et d'erreur pour le débogage
-        if result.stdout:
-            logger.info(f"Sortie standard:\n{result.stdout}")
-        if result.stderr:
-            logger.error(f"Sortie d'erreur:\n{result.stderr}")
-
-        if result.returncode != 0:
-            error_msg = f"Erreur lors de la synchronisation (code {result.returncode}): {result.stderr}"
-            logger.error(error_msg)
-            raise SyncError(error_msg)
-
-        # Vérifier que le fichier de sortie a été créé
-        if not os.path.isfile(output_file):
-            raise SyncError(
-                f"Le fichier de sortie {output_file} n'a pas été créé")
-
-        log("=== SYNCHRONISATION TERMINÉE AVEC SUCCÈS ===")
-
-    except Exception as e:
-        error_msg = f"Erreur lors de la synchronisation: {str(e)}"
-        log(f"ERREUR: {error_msg}")
-
-        # Sauvegarder l'erreur dans le fichier JSON
-        try:
-            with open(output_file, 'w', encoding='utf-8') as f:
-                json.dump(
-                    {
-                        "status":
-                        "error",
-                        "mode":
-                        mode,
-                        "source":
-                        source_dir,
-                        "destination":
-                        dest_dir,
-                        "error":
-                        error_msg,
-                        "timestamp":
-                        datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    },
-                    f,
-                    indent=2)
-        except Exception as write_error:
-            logger.error(
-                f"Erreur lors de l'écriture du fichier d'erreur: {str(write_error)}"
-            )
-
-        log("=== SYNCHRONISATION TERMINÉE AVEC ERREUR ===")
-        raise SyncError(error_msg)
+        logger.error(
+            f"Erreur lors de la préparation du chemin pour rsync: {str(e)}")
+        # En cas d'erreur, retourner le chemin normalisé
+        return path.replace('\\', '/')
 
 
 # Point d'entrée principal
