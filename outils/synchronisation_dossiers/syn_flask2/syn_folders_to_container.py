@@ -17,6 +17,51 @@
 # ]
 # ///
 
+"""
+===============================================================================
+SYNCHRONISATION DE DOSSIERS - OUTIL MULTIPLATEFORME
+===============================================================================
+
+Description:
+-----------
+Ce script permet de synchroniser des dossiers entre différents systèmes,
+en gérant les caractères spéciaux et les encodages. Il supporte plusieurs
+modes de synchronisation et fonctionne aussi bien sous Windows que Linux/Unix.
+
+Fonctionnalités principales:
+---------------------------
+- Synchronisation unidirectionnelle (A vers B ou B vers A)
+- Synchronisation bidirectionnelle (miroir)
+- Gestion correcte des encodages UTF-8 et caractères spéciaux
+- Support de Windows (robocopy) et Linux/Unix (rsync)
+- Interface en ligne de commande et API pour intégration
+- Journalisation détaillée des opérations
+- Comparaison préalable des dossiers avant synchronisation
+
+Utilisation:
+-----------
+1. Comparaison: python script.py compare <source_dir> <dest_dir> <mode> [output_file]
+2. Synchronisation: python script.py sync <source_dir> <dest_dir> <mode> [output_file]
+
+Modes de synchronisation:
+------------------------
+- "A vers B": copie de la source vers la destination
+- "B vers A": copie de la destination vers la source
+- "A idem B": synchronisation bidirectionnelle (miroir)
+
+Auteur: bigmoletos
+Version: 1.0.0
+Date de création: 2024-02-21
+Dernière modification: 2024-06-11
+Licence: Propriétaire
+
+Dépendances:
+-----------
+- Python >= 3.10
+- rsync (pour Linux/Unix) ou robocopy (inclus dans Windows)
+- Bibliothèques Python: voir section 'dependencies' ci-dessus
+"""
+
 import os
 import json
 import subprocess
