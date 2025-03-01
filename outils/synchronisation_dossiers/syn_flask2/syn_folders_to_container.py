@@ -1051,40 +1051,61 @@ def sync_folders(source_dir, dest_dir, mode, output_file):
     try:
         sync_result_file = "sync_result.json"
 
+        # =====================================================================
+        # PRÉPARATION DES CHEMINS POUR LA SYNCHRONISATION
+        # =====================================================================
         # Normalisation des chemins pour compatibilité multiplateforme
+        # Convertit tous les séparateurs de chemin au format standard du système
         source_dir = os.path.normpath(source_dir)
         dest_dir = os.path.normpath(dest_dir)
 
         # Assurer la présence du séparateur final pour éviter des problèmes lors de la concaténation de chemins
+        # Ceci est important pour garantir que les chemins se composent correctement (ex: "C:\path\" + "file.txt")
         if not source_dir.endswith(os.sep):
             source_dir = source_dir + os.sep
         if not dest_dir.endswith(os.sep):
             dest_dir = dest_dir + os.sep
 
+        # =====================================================================
+        # JOURNALISATION DU DÉBUT DE LA SYNCHRONISATION
+        # =====================================================================
         logger.info("=== DÉBUT DE LA SYNCHRONISATION ===")
         logger.info(f"Mode: {mode}")
         logger.info(f"Source: {source_dir}")
         logger.info(f"Destination: {dest_dir}")
 
-        # Chargement des données de comparaison depuis le fichier JSON
+        # =====================================================================
+        # CHARGEMENT DES DONNÉES DE COMPARAISON
+        # =====================================================================
+        # Les données de comparaison contiennent les listes des fichiers/dossiers à créer,
+        # mettre à jour, supprimer ou synchroniser de manière bidirectionnelle
         try:
             with open(output_file, 'r', encoding='utf-8') as f:
+                # Chargement du fichier JSON qui contient les résultats de la comparaison préalable
                 comparison_data = json.load(f)
 
                 # Extraction des listes d'éléments à traiter
-                to_create_list = comparison_data.get('to_create', [])
-                to_update_list = comparison_data.get('to_update', [])
-                to_delete_list = comparison_data.get('to_delete', [])
+                # Ces listes contiennent des chemins relatifs par rapport aux dossiers source et destination
+                to_create_list = comparison_data.get(
+                    'to_create', [])  # Éléments à créer dans la destination
+                to_update_list = comparison_data.get(
+                    'to_update',
+                    [])  # Éléments à mettre à jour dans la destination
+                to_delete_list = comparison_data.get(
+                    'to_delete', [])  # Éléments à supprimer de la destination
                 to_bidirectionnel_list = comparison_data.get(
-                    'to_bidirectionnel', [])
+                    'to_bidirectionnel',
+                    [])  # Éléments à synchroniser dans les deux sens
 
-                # Récupération des compteurs
+                # Récupération des compteurs (nombre d'éléments dans chaque catégorie)
+                # Ces compteurs sont utilisés pour le suivi de progression et les journaux
                 nombre_to_create = comparison_data.get('nombre_to_create', 0)
                 nombre_to_update = comparison_data.get('nombre_to_update', 0)
                 nombre_to_delete = comparison_data.get('nombre_to_delete', 0)
                 nombre_to_bidirectionnel = comparison_data.get(
                     'nombre_to_bidirectionnel', 0)
 
+                # Journalisation des statistiques de synchronisation
                 logger.info(f"Éléments à créer: {nombre_to_create}")
                 logger.info(f"Éléments à mettre à jour: {nombre_to_update}")
                 logger.info(f"Éléments à supprimer: {nombre_to_delete}")
@@ -1097,8 +1118,14 @@ def sync_folders(source_dir, dest_dir, mode, output_file):
             to_create_list = to_update_list = to_delete_list = to_bidirectionnel_list = []
             nombre_to_create = nombre_to_update = nombre_to_delete = nombre_to_bidirectionnel = 0
 
+        # =====================================================================
+        # PROCESSUS DE SYNCHRONISATION - SÉLECTION DE LA MÉTHODE
+        # =====================================================================
         # Sous Windows, utiliser robocopy qui est plus puissant et fiable que xcopy/copy
         if SYSTEM_INFO['os'] == 'windows':
+            # =====================================================================
+            # SYNCHRONISATION AVEC ROBOCOPY (WINDOWS)
+            # =====================================================================
             # Configurer les options robocopy selon le mode de synchronisation
             if mode == "A vers B":
                 # Mode standard: source -> destination
@@ -1119,9 +1146,11 @@ def sync_folders(source_dir, dest_dir, mode, output_file):
 
             elif mode == "B vers A":
                 # Mode restauration: inversion source et destination
+                # Dans ce mode, les fichiers sont copiés de la destination vers la source
                 src, dst = dest_dir, source_dir
                 logger.info("Synchronisation B vers A avec robocopy")
 
+                # Utilisation des mêmes options que pour le mode "A vers B"
                 robocopy_cmd = [
                     "robocopy", src, dst, "/E", "/COPY:DAT", "/PURGE", "/R:3",
                     "/W:5", "/MT:4"
@@ -1129,10 +1158,14 @@ def sync_folders(source_dir, dest_dir, mode, output_file):
 
             elif mode == "A idem B":
                 # Mode miroir bidirectionnel (deux synchronisations)
+                # Ce mode réalise une synchronisation complète dans les deux sens
+                # pour assurer que les deux dossiers contiennent exactement les mêmes fichiers
                 logger.info(
                     "Synchronisation bidirectionnelle (miroir) avec robocopy")
 
-                # Étape 1: Synchroniser de A vers B
+                # =====================================================================
+                # PREMIÈRE PASSE: SYNCHRONISATION A -> B
+                # =====================================================================
                 logger.info("Étape 1: Synchronisation A -> B")
                 robocopy_a_to_b = [
                     "robocopy", source_dir, dest_dir, "/E", "/COPY:DAT",
@@ -1171,8 +1204,11 @@ def sync_folders(source_dir, dest_dir, mode, output_file):
                     )
                     raise SyncError(f"Erreur d'exécution: {str(e)}")
 
-                # Étape 2: Synchronisation B -> A sans PURGE
-                # (préserve les fichiers uniques dans chaque côté)
+                # =====================================================================
+                # DEUXIÈME PASSE: SYNCHRONISATION B -> A
+                # =====================================================================
+                # Cette passe permet de récupérer les fichiers uniques présents dans la destination
+                # vers la source, sans supprimer les fichiers uniques de la source
                 logger.info("Étape 2: Synchronisation B -> A")
                 robocopy_b_to_a = [
                     "robocopy", dest_dir, source_dir, "/E", "/COPY:DAT",
@@ -1201,7 +1237,10 @@ def sync_folders(source_dir, dest_dir, mode, output_file):
                     )
                     raise SyncError(f"Erreur d'exécution: {str(e)}")
 
-                # Préparation du résultat pour mode bidirectionnel
+                # =====================================================================
+                # PRÉPARATION DU RÉSULTAT POUR LE MODE BIDIRECTIONNEL
+                # =====================================================================
+                # Structure le résultat de la synchronisation pour l'écriture dans le fichier JSON
                 sync_result = {
                     "mode":
                     mode,
@@ -1227,13 +1266,14 @@ def sync_folders(source_dir, dest_dir, mode, output_file):
                     "success"
                 }
 
+                # Écriture du résultat dans le fichier JSON
                 with open(sync_result_file, 'w', encoding='utf-8') as f:
                     json.dump(sync_result, f, ensure_ascii=False, indent=4)
 
                 logger.success(
                     f"Synchronisation bidirectionnelle terminée avec succès (robocopy)"
                 )
-                return  # Sortie précoce après succès
+                return  # Sortie précoce après succès en mode bidirectionnel
 
             else:
                 logger.error(f"Mode de synchronisation inconnu: {mode}")
@@ -1298,6 +1338,9 @@ def sync_folders(source_dir, dest_dir, mode, output_file):
             }
 
         else:
+            # =====================================================================
+            # SYNCHRONISATION AVEC RSYNC (LINUX/UNIX/WSL)
+            # =====================================================================
             # Sur Linux/Unix/WSL, utilisation de rsync comme alternative à robocopy
             # Options rsync de base pour tous les modes:
             # -a (archive): préserve les attributs, permissions, timestamps, etc.
@@ -1312,11 +1355,13 @@ def sync_folders(source_dir, dest_dir, mode, output_file):
                 src, dst = prepare_path_for_rsync(
                     source_dir), prepare_path_for_rsync(dest_dir)
                 # Option --delete: supprime les fichiers de la destination absents de la source
+                # Cette option assure que la destination devient une copie exacte de la source
                 rsync_options = base_rsync_options + ["--delete"]
 
             elif mode == "B vers A":
                 logger.info("Synchronisation B vers A (restauration)")
                 # Inversion des chemins pour la restauration
+                # Dans ce mode, on restaure de la destination vers la source
                 src, dst = prepare_path_for_rsync(
                     dest_dir), prepare_path_for_rsync(source_dir)
                 rsync_options = base_rsync_options + ["--delete"]
@@ -1326,6 +1371,7 @@ def sync_folders(source_dir, dest_dir, mode, output_file):
                     "Synchronisation bidirectionnelle (miroir) avec rsync")
                 # Note: mode bidirectionnel avec rsync à implémenter (nécessite deux passes)
                 # Similaire à la version avec robocopy
+                # TODO: Implémenter la synchronisation bidirectionnelle avec rsync
                 return  # Pour le moment, sortie sans action
 
             else:
@@ -1333,6 +1379,7 @@ def sync_folders(source_dir, dest_dir, mode, output_file):
                 raise ValueError(f"Mode de synchronisation inconnu: {mode}")
 
             # Construction de la commande rsync complète
+            # Le "/" à la fin des chemins est crucial pour rsync - il indique de copier le contenu du dossier
             rsync_cmd = ["rsync"] + rsync_options + [f"{src}/", f"{dst}/"]
             logger.debug(f"Commande rsync: {' '.join(rsync_cmd)}")
 
@@ -1352,6 +1399,7 @@ def sync_folders(source_dir, dest_dir, mode, output_file):
                 # Codes rsync particuliers:
                 # 23: fichiers disparus pendant la copie (normal dans certains cas)
                 # 24: quelques fichiers n'ont pas pu être transférés (peut être ignoré parfois)
+                # Ces codes d'erreur ne sont pas considérés comme des échecs critiques
                 if e.returncode in [23, 24]:
                     logger.warning(
                         f"Synchronisation terminée avec des avertissements: {e.stderr}"
@@ -1367,7 +1415,12 @@ def sync_folders(source_dir, dest_dir, mode, output_file):
             else:  # B vers A
                 num_elements = nombre_to_bidirectionnel
 
+            # =====================================================================
+            # PRÉPARATION DU RÉSULTAT DE SYNCHRONISATION
+            # =====================================================================
             # Structure du résultat final
+            # Cette structure est similaire à celle utilisée pour robocopy
+            # pour maintenir une cohérence dans le traitement des résultats
             sync_result = {
                 "mode":
                 mode,
@@ -1393,6 +1446,9 @@ def sync_folders(source_dir, dest_dir, mode, output_file):
                 "success"
             }
 
+        # =====================================================================
+        # ENREGISTREMENT DES RÉSULTATS DE SYNCHRONISATION
+        # =====================================================================
         # Enregistrement du résultat dans un fichier JSON
         with open(sync_result_file, 'w', encoding='utf-8') as f:
             json.dump(sync_result, f, ensure_ascii=False, indent=4)
@@ -1402,6 +1458,9 @@ def sync_folders(source_dir, dest_dir, mode, output_file):
         )
 
     except Exception as e:
+        # =====================================================================
+        # GESTION DES ERREURS DE SYNCHRONISATION
+        # =====================================================================
         # Gestion des erreurs et journalisation
         error_msg = f"Erreur lors de la synchronisation: {str(e)}"
         logger.error(error_msg)
@@ -1409,6 +1468,7 @@ def sync_folders(source_dir, dest_dir, mode, output_file):
         )  # Affiche la trace complète pour faciliter le débogage
 
         # Sauvegarde de l'erreur dans un fichier JSON
+        # Ceci permet à l'interface utilisateur de traiter l'échec de manière appropriée
         with open("sync_result.json", 'w', encoding='utf-8') as f:
             json.dump(
                 {
@@ -1423,6 +1483,7 @@ def sync_folders(source_dir, dest_dir, mode, output_file):
                 indent=4)
 
         # Propagation de l'erreur
+        # Ceci permet à l'appelant de gérer l'échec de la synchronisation
         raise SyncError(error_msg)
 
 
@@ -1633,22 +1694,47 @@ def run_subprocess_safely(cmd_args, log_prefix="Commande"):
         >>> if result.returncode < 8:  # Codes de retour spécifiques à robocopy
         >>>     logger.success("Copie réussie")
     """
+    # =====================================================================
+    # JOURNALISATION DE LA COMMANDE
+    # =====================================================================
+    # Journalise la commande complète pour faciliter le débogage
     logger.debug(f"{log_prefix}: {' '.join(cmd_args)}")
 
     try:
+        # =====================================================================
+        # CONFIGURATION DE L'ENVIRONNEMENT D'EXÉCUTION
+        # =====================================================================
         # Configuration de l'environnement d'exécution pour garantir l'encodage UTF-8
         # Ceci est crucial pour éviter les problèmes avec les caractères non-ASCII dans les chemins
         env = os.environ.copy()
-        env["PYTHONIOENCODING"] = "utf-8"  # Définit l'encodage pour les flux d'entrée/sortie de Python
 
+        # Définit l'encodage pour les flux d'entrée/sortie de Python
+        # C'est fondamental pour le traitement correct des caractères spéciaux
+        env["PYTHONIOENCODING"] = "utf-8"
+
+        # =====================================================================
+        # CONFIGURATION SPÉCIFIQUE POUR WINDOWS
+        # =====================================================================
         # Configuration spécifique pour Windows qui est plus sensible aux problèmes d'encodage
         if SYSTEM_INFO['os'] == 'windows':
             # Force l'utilisation de l'encodage UTF-8 pour stdin/stdout/stderr sous Windows
+            # Ceci contourne les limitations de l'encodage par défaut de Windows (souvent cp1252)
             env["PYTHONLEGACYWINDOWSSTDIO"] = "utf-8"
+
             # Mode strict d'encodage pour détecter immédiatement les problèmes
+            # Le mode "strict" lève des exceptions pour les caractères non encodables
+            # au lieu de les remplacer silencieusement
             env["PYTHONIOENCODING"] = "utf-8:strict"
 
+        # =====================================================================
+        # EXÉCUTION SÉCURISÉE DE LA COMMANDE
+        # =====================================================================
         # Exécution sécurisée de la commande avec tous les paramètres d'encodage configurés
+        # Les paramètres clés sont:
+        # - text=True : traite les sorties comme du texte plutôt que des bytes
+        # - encoding='utf-8' : spécifie explicitement l'encodage à utiliser
+        # - errors='replace' : remplace les caractères non encodables par des caractères de remplacement
+        #   plutôt que de lever une exception (fallback si le mode strict échoue)
         process = subprocess.run(cmd_args,
                                  stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE,
@@ -1658,13 +1744,25 @@ def run_subprocess_safely(cmd_args, log_prefix="Commande"):
                                  env=env)
         return process
     except Exception as e:
+        # =====================================================================
+        # GESTION DES ERREURS D'EXÉCUTION
+        # =====================================================================
+        # Journalisation détaillée en cas d'erreur
         logger.error(f"Erreur lors de l'exécution de {log_prefix}: {str(e)}")
-        traceback.print_exc()  # Afficher la trace complète pour le débogage
+
+        # Affiche la trace complète pour faciliter le débogage
+        # Ceci est particulièrement utile pour diagnostiquer des problèmes complexes d'encodage
+        traceback.print_exc()
+
+        # Remonte l'erreur avec un message spécifique pour permettre un traitement approprié
         raise SyncError(f"Erreur d'exécution: {str(e)}")
 
 
 # Point d'entrée principal
 if __name__ == "__main__":
+    # =====================================================================
+    # POINT D'ENTRÉE PRINCIPAL DU SCRIPT
+    # =====================================================================
     import sys
     if len(sys.argv) < 2:
         print("Usage: python script.py {compare|sync} [arguments]")
@@ -1676,15 +1774,18 @@ if __name__ == "__main__":
     default_compare_output = "output_comparison.json"
     default_sync_output = "sync_results.json"
 
+    # =====================================================================
+    # COMMANDE DE COMPARAISON
+    # =====================================================================
     if command == "compare":
         if len(sys.argv) == 5:
-            # Sans fichier de sortie spécifié
+            # Sans fichier de sortie spécifié (utilisation du fichier par défaut)
             source_dir = sys.argv[2]
             dest_dir = sys.argv[3]
             mode = sys.argv[4]
             output_file = default_compare_output
         elif len(sys.argv) == 6:
-            # Avec fichier de sortie spécifié
+            # Avec fichier de sortie spécifié par l'utilisateur
             source_dir = sys.argv[2]
             dest_dir = sys.argv[3]
             mode = sys.argv[4]
@@ -1695,17 +1796,21 @@ if __name__ == "__main__":
             )
             sys.exit(1)
 
+        # Lancement de la comparaison avec les paramètres fournis
         compare_folders(source_dir, dest_dir, mode, output_file)
 
+    # =====================================================================
+    # COMMANDE DE SYNCHRONISATION
+    # =====================================================================
     elif command == "sync":
         if len(sys.argv) == 5:
-            # Sans fichier de sortie spécifié
+            # Sans fichier de sortie spécifié (utilisation du fichier par défaut)
             source_dir = sys.argv[2]
             dest_dir = sys.argv[3]
             mode = sys.argv[4]
             output_file = default_sync_output
         elif len(sys.argv) == 6:
-            # Avec fichier de sortie spécifié
+            # Avec fichier de sortie spécifié par l'utilisateur
             source_dir = sys.argv[2]
             dest_dir = sys.argv[3]
             mode = sys.argv[4]
@@ -1716,6 +1821,7 @@ if __name__ == "__main__":
             )
             sys.exit(1)
 
+        # Lancement de la synchronisation avec les paramètres fournis
         sync_folders(source_dir, dest_dir, mode, output_file)
     else:
         print("Usage: python script.py {compare|sync} [arguments]")
