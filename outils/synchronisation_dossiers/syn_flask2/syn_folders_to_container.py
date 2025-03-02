@@ -1221,14 +1221,17 @@ def sync_folders(source_dir, dest_dir, mode, output_file):
                     f"Commande robocopy A->B: {' '.join(robocopy_a_to_b)}")
 
                 try:
+
                     # Idéalement, utiliser run_subprocess_safely pour gérer les problèmes d'encodage:
                     # process_a_to_b = run_subprocess_safely(robocopy_a_to_b, "Robocopy A->B")
 
                     # Mais pour maintenir la compatibilité avec le code existant:
-                    process_a_to_b = subprocess.run(robocopy_a_to_b,
-                                                    stdout=subprocess.PIPE,
-                                                    stderr=subprocess.PIPE,
-                                                    text=True)
+                    process_a_to_b = run_subprocess_safely(
+                        robocopy_a_to_b, "Robocopy A->B")
+                    # process_a_to_b = subprocess.run(robocopy_a_to_b,
+                    #                                 stdout=subprocess.PIPE,
+                    #                                 stderr=subprocess.PIPE,
+                    #                                 text=True)
 
                     # Interprétation des codes de retour robocopy:
                     # 0 - Aucune action (tout est à jour)
@@ -1264,10 +1267,12 @@ def sync_folders(source_dir, dest_dir, mode, output_file):
                     f"Commande robocopy B->A: {' '.join(robocopy_b_to_a)}")
 
                 try:
-                    process_b_to_a = subprocess.run(robocopy_b_to_a,
-                                                    stdout=subprocess.PIPE,
-                                                    stderr=subprocess.PIPE,
-                                                    text=True)
+                    process_b_to_a = run_subprocess_safely(
+                        robocopy_b_to_a, "Robocopy B->A")
+                    # process_b_to_a = subprocess.run(robocopy_b_to_a,
+                    #                                 stdout=subprocess.PIPE,
+                    #                                 stderr=subprocess.PIPE,
+                    #                                 text=True)
                     if process_b_to_a.returncode < 8:
                         logger.info("Synchronisation B->A réussie")
                     else:
@@ -1332,10 +1337,11 @@ def sync_folders(source_dir, dest_dir, mode, output_file):
                 # process = run_subprocess_safely(robocopy_cmd, "Robocopy")
 
                 # Mais la version actuelle utilise subprocess directement:
-                process = subprocess.run(robocopy_cmd,
-                                         stdout=subprocess.PIPE,
-                                         stderr=subprocess.PIPE,
-                                         text=True)
+                process = run_subprocess_safely(robocopy_cmd, "Robocopy")
+                # process = subprocess.run(robocopy_cmd,
+                #                          stdout=subprocess.PIPE,
+                #                          stderr=subprocess.PIPE,
+                #                          text=True)
 
                 # Vérification du code de retour
                 if process.returncode < 8:
