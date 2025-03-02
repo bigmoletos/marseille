@@ -17,8 +17,12 @@ Requires:
     - Flask
     - syn_folders_to_container.py dans le même répertoire
 
-Author: bigmoletos
-Date: 2024-02-21
+Auteur: bigmoletos
+Version: 1.0.0
+Date de création: 2024-02-21
+Dernière modification: 2025-03-02
+Licence: Propriétaire
+
 """
 
 import json
@@ -145,12 +149,9 @@ Paramètres de comparaison:
 - Fichier de sortie: {output_file}
 """)
 
-        # Générer les JSON des dossiers
-        source_json = generate_folder_json(source_dir)
-        dest_json = generate_folder_json(dest_dir)
-
-        # Comparer les dossiers
-        compare_json_folders(source_json, dest_json)
+        # Utiliser directement la fonction compare_folders du module syn_folders_to_container
+        # au lieu de notre logique personnalisée
+        compare_folders(source_dir, dest_dir, mode, output_file)
 
         # Créer le résultat de la comparaison en utilisant les variables globales du module
         comparison_result = {
@@ -187,7 +188,8 @@ Paramètres de comparaison:
 
 
 def perform_sync(source_dir: str, dest_dir: str, mode: str) -> None:
-    """Effectue la synchronisation des dossiers en utilisant shutil.
+    """Effectue la synchronisation des dossiers en utilisant la fonction sync_folders
+    du module syn_folders_to_container.
 
     Args:
         source_dir (str): Chemin du dossier source
@@ -195,131 +197,18 @@ def perform_sync(source_dir: str, dest_dir: str, mode: str) -> None:
         mode (str): Mode de synchronisation
     """
     try:
-        # Générer les JSON des dossiers
-        source_json = generate_folder_json(source_dir)
-        dest_json = generate_folder_json(dest_dir)
+        # Fichier de sortie pour la synchronisation
+        output_file = os.path.join(DATA_DIR, 'temp_comparison.json')
 
-        # Comparer les dossiers
-        compare_json_folders(source_json, dest_json)
-
-        # Créer les dossiers manquants et copier les fichiers
-        for item in syn_folders_to_container.to_create + syn_folders_to_container.to_update:
-            source_path = os.path.join(source_dir, item)
-            dest_path = os.path.join(dest_dir, item)
-
-            # Si c'est un dossier
-            if os.path.isdir(source_path):
-                if not os.path.exists(dest_path):
-                    os.makedirs(dest_path, exist_ok=True)
-                    logger.info(f"Dossier créé: {item}")
-                # Copier tout le contenu du dossier
-                for root, dirs, files in os.walk(source_path):
-                    # Créer les sous-dossiers dans la destination
-                    for d in dirs:
-                        src_dir = os.path.join(root, d)
-                        dst_dir = os.path.join(
-                            dest_path, os.path.relpath(src_dir, source_path))
-                        os.makedirs(dst_dir, exist_ok=True)
-                        logger.info(
-                            f"Sous-dossier créé: {os.path.relpath(dst_dir, dest_dir)}"
-                        )
-
-                    # Copier les fichiers
-                    for f in files:
-                        src_file = os.path.join(root, f)
-                        dst_file = os.path.join(
-                            dest_path, os.path.relpath(src_file, source_path))
-                        os.makedirs(os.path.dirname(dst_file), exist_ok=True)
-                        try:
-                            # Si c'est un fichier Git en lecture seule, on force la copie
-                            if ".git" in dst_file and os.path.exists(dst_file):
-                                os.chmod(dst_file, 0o666)
-                            shutil.copy2(src_file, dst_file)
-                            # Rendre le fichier copié en lecture seule si c'est un fichier Git
-                            if ".git" in dst_file:
-                                os.chmod(dst_file, 0o444)
-                            logger.info(
-                                f"Fichier copié: {os.path.relpath(dst_file, dest_dir)}"
-                            )
-                        except PermissionError:
-                            try:
-                                # Deuxième tentative avec forçage des permissions
-                                if os.path.exists(dst_file):
-                                    os.chmod(dst_file, 0o666)
-                                shutil.copy2(src_file, dst_file)
-                                if ".git" in dst_file:
-                                    os.chmod(dst_file, 0o444)
-                                logger.info(
-                                    f"Fichier copié (2e tentative): {os.path.relpath(dst_file, dest_dir)}"
-                                )
-                            except Exception as e:
-                                logger.warning(
-                                    f"Permission refusée pour: {os.path.relpath(src_file, source_path)} - {str(e)}"
-                                )
-
-            # Si c'est un fichier
-            elif os.path.isfile(source_path):
-                try:
-                    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                    # Si c'est un fichier Git en lecture seule, on force la copie
-                    if ".git" in dest_path and os.path.exists(dest_path):
-                        os.chmod(dest_path, 0o666)
-                    shutil.copy2(source_path, dest_path)
-                    # Rendre le fichier copié en lecture seule si c'est un fichier Git
-                    if ".git" in dest_path:
-                        os.chmod(dest_path, 0o444)
-                    logger.info(f"Fichier copié: {item}")
-                except PermissionError:
-                    try:
-                        # Deuxième tentative avec forçage des permissions
-                        if os.path.exists(dest_path):
-                            os.chmod(dest_path, 0o666)
-                        shutil.copy2(source_path, dest_path)
-                        if ".git" in dest_path:
-                            os.chmod(dest_path, 0o444)
-                        logger.info(f"Fichier copié (2e tentative): {item}")
-                    except Exception as e:
-                        logger.warning(
-                            f"Permission refusée pour: {item} - {str(e)}")
-
-        # Supprimer les fichiers si nécessaire (sauf en mode bidirectionnel)
-        if mode != "A idem B":
-            for item in syn_folders_to_container.to_delete:
-                path_to_delete = os.path.join(dest_dir, item)
-                if os.path.exists(path_to_delete):
-                    try:
-                        if os.path.isfile(path_to_delete):
-                            # Si c'est un fichier Git, on le rend modifiable avant de le supprimer
-                            if ".git" in path_to_delete:
-                                os.chmod(path_to_delete, 0o666)
-                            os.remove(path_to_delete)
-                            logger.info(f"Fichier supprimé: {item}")
-                        elif os.path.isdir(path_to_delete):
-                            # Pour les dossiers Git, on rend tous les fichiers modifiables
-                            if ".git" in path_to_delete:
-                                for root, _, files in os.walk(path_to_delete):
-                                    for f in files:
-                                        try:
-                                            os.chmod(os.path.join(root, f),
-                                                     0o666)
-                                        except:
-                                            pass
-                            shutil.rmtree(path_to_delete)
-                            logger.info(f"Dossier supprimé: {item}")
-                    except PermissionError:
-                        logger.warning(
-                            f"Permission refusée pour la suppression de: {item}"
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"Erreur lors de la suppression de {item}: {str(e)}"
-                        )
+        # Utiliser directement la fonction sync_folders du module syn_folders_to_container
+        # au lieu d'implémenter notre propre logique
+        sync_folders(source_dir, dest_dir, mode, output_file)
 
         logger.info(f"""
 Synchronisation terminée:
-- {len(syn_folders_to_container.to_create)} éléments créés
-- {len(syn_folders_to_container.to_update)} éléments mis à jour
-- {len(syn_folders_to_container.to_delete)} éléments supprimés
+- {syn_folders_to_container.nombre_to_create} éléments créés
+- {syn_folders_to_container.nombre_to_update} éléments mis à jour
+- {syn_folders_to_container.nombre_to_delete} éléments supprimés
 """)
 
     except Exception as e:
