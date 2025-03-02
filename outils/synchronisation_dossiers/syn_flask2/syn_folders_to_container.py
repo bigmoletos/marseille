@@ -52,7 +52,7 @@ Modes de synchronisation:
 Auteur: bigmoletos
 Version: 1.0.0
 Date de création: 2024-02-21
-Dernière modification: 2024-06-11
+Dernière modification: 2025-03-02
 Licence: Propriétaire
 
 Dépendances:
