@@ -33,6 +33,8 @@ body {
     gap: 10px;
     margin-bottom: 20px;
 }
+
+/* Styles des boutons */
 .btn {
     padding: 8px 15px;
     border: none;
@@ -40,19 +42,63 @@ body {
     cursor: pointer;
     color: white;
     font-weight: bold;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+}
+.btn i {
+    margin-right: 5px;
+    vertical-align: middle;
+}
+.btn:hover {
+    opacity: 0.9;
 }
 .btn-primary {
     background-color: #007bff;
 }
 .btn-success {
     background-color: #28a745;
+    padding: 10px 25px;
+    font-size: 16px;
+    margin-top: 20px;
+}
+.btn-success:hover {
+    background-color: #218838;
+    transform: translateY(-1px);
 }
 .btn-secondary {
     background-color: #6c757d;
 }
-.btn:hover {
-    opacity: 0.9;
+.btn-sm {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
 }
+
+/* Styles spécifiques pour les boutons outline */
+.btn-outline-secondary {
+    color: #6c757d;
+    background-color: transparent;
+    border: 1px solid #6c757d;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 5px;
+}
+.btn-outline-secondary i + span,
+.btn-outline-secondary i + text {
+    display: inline !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+.btn-outline-secondary:not(:hover) {
+    color: #6c757d !important;
+}
+
+/* Styles pour les résultats */
 .result {
     margin-top: 20px;
     padding: 20px;
@@ -65,6 +111,8 @@ body {
     margin-bottom: 20px;
     text-align: center;
 }
+
+/* Alertes et messages */
 .error {
     color: #dc3545;
     background-color: #f8d7da;
@@ -81,12 +129,31 @@ body {
     margin: 10px 0;
     border-radius: 4px;
 }
+.alert {
+    animation: fadeOut 5s forwards;
+}
+.alert-success, .alert-danger {
+    animation: fadeOut 5s forwards;
+}
+.alert-info, .info-panel {
+    animation: none !important;
+    opacity: 1 !important;
+}
+@keyframes fadeOut {
+    0% { opacity: 1; }
+    70% { opacity: 1; }
+    100% { opacity: 0; }
+}
+
+/* Listes de fichiers */
 .file-list {
     margin: 15px 0;
     padding: 15px;
     background-color: #fff;
     border: 1px solid #e9ecef;
     border-radius: 4px;
+    max-height: 600px;
+    overflow-y: auto;
 }
 .file-list h4 {
     margin: 0 0 15px 0;
@@ -110,6 +177,56 @@ body {
 .file-list li:hover {
     background-color: #e9ecef;
 }
+
+/* Styles pour la structure de dossiers */
+.folder-icon {
+    cursor: pointer;
+    margin-right: 5px;
+}
+.folder-content {
+    margin-left: 20px;
+    display: none; /* Masquer les dossiers par défaut */
+}
+.folder-item {
+    font-weight: bold;
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+}
+.folder-container {
+    margin-bottom: 5px;
+}
+.file-item {
+    padding: 2px 5px;
+}
+
+/* Styles pour le résultat de synchronisation */
+.sync-results {
+    max-height: 600px;
+    overflow-y: auto;
+}
+
+/* Badges et éléments UI */
+.badge-count {
+    margin-left: 8px;
+}
+.path-segment {
+    color: #666;
+}
+.file-name {
+    color: #000;
+    font-weight: normal;
+}
+.collapse-toggle {
+    cursor: pointer;
+    padding: 2px 5px;
+    border-radius: 3px;
+}
+.collapse-toggle:hover {
+    background-color: #f8f9fa;
+}
+
+/* Styles résumé */
 .summary {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -143,6 +260,8 @@ body {
     color: #6c757d;
     font-size: 14px;
 }
+
+/* Styles pour les détails */
 .details-container {
     margin-top: 30px;
     padding: 20px;
@@ -156,17 +275,53 @@ body {
     padding-bottom: 10px;
     border-bottom: 2px solid #e9ecef;
 }
+
+/* Styles pour le formulaire */
 form {
     margin-top: 20px;
     text-align: center;
 }
-.btn-success {
-    background-color: #28a745;
-    padding: 10px 25px;
-    font-size: 16px;
-    margin-top: 20px;
+
+/* Styles pour le chargement */
+.loading {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 1000;
 }
-.btn-success:hover {
-    background-color: #218838;
-    transform: translateY(-1px);
+.loading-content {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    color: white;
+}
+
+/* Styles pour les icônes */
+.bi {
+    display: inline-block;
+    vertical-align: -0.125em;
+}
+.bi-plus-circle {
+    color: #28a745;
+}
+.bi-arrow-clockwise {
+    color: #ffc107;
+}
+.bi-trash {
+    color: #dc3545;
+}
+.bi-folder-fill {
+    color: #0d6efd;
+}
+.bi-folder-plus {
+    color: #198754;
+}
+.bi-folder-minus {
+    color: #dc3545;
 }

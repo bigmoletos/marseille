@@ -18,7 +18,7 @@ Requires:
     - syn_folders_to_container.py dans le même répertoire
 
 Auteur: bigmoletos
-Version: 1.0.0-a1
+Version: 1.0.0-a2
 Date de création: 2024-02-21
 Dernière modification: 2025-03-02
 Licence: Propriétaire
