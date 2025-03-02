@@ -25,16 +25,92 @@
             color: white;
         }
         .file-list {
-            max-height: 300px;
+            max-height: 600px;
             overflow-y: auto;
         }
         .alert {
             animation: fadeOut 5s forwards;
         }
+        .alert-success, .alert-danger {
+            animation: fadeOut 5s forwards;
+        }
+        .alert-info {
+            animation: none !important;
+            opacity: 1 !important;
+        }
         @keyframes fadeOut {
             0% { opacity: 1; }
             70% { opacity: 1; }
             100% { opacity: 0; }
+        }
+        /* Styles pour les listes de fichiers */
+        .folder-icon {
+            cursor: pointer;
+            margin-right: 5px;
+        }
+        .folder-content {
+            margin-left: 20px;
+            display: none; /* Masquer les dossiers par défaut */
+        }
+        .folder-item {
+            font-weight: bold;
+            cursor: pointer;
+            user-select: none;
+        }
+        .folder-container {
+            margin-bottom: 5px;
+        }
+        .file-item {
+            padding: 2px 5px;
+        }
+        /* Styles pour le résultat de synchronisation */
+        .sync-results {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        /* Badges pour les compteurs */
+        .badge-count {
+            margin-left: 8px;
+        }
+        /* Style pour faciliter la lisibilité des chemins */
+        .path-segment {
+            color: #666;
+        }
+        .file-name {
+            color: #000;
+            font-weight: normal;
+        }
+        /* Style pour les icônes */
+        .bi-plus-circle {
+            color: #28a745;
+        }
+        .bi-arrow-clockwise {
+            color: #ffc107;
+        }
+        .bi-trash {
+            color: #dc3545;
+        }
+        .bi-folder-fill {
+            color: #0d6efd;
+        }
+        .bi-folder-plus {
+            color: #198754;
+        }
+        .bi-folder-minus {
+            color: #dc3545;
+        }
+        .collapse-toggle {
+            cursor: pointer;
+            padding: 2px 5px;
+            border-radius: 3px;
+        }
+        .collapse-toggle:hover {
+            background-color: #f8f9fa;
+        }
+        /* Empêcher la disparition de l'encadré d'information */
+        .info-panel {
+            animation: none !important;
+            opacity: 1 !important;
         }
     </style>
 </head>
@@ -108,49 +184,307 @@
                 <h5 class="card-title mb-0">Résultats de la Comparaison</h5>
             </div>
             <div class="card-body">
-                <div class="alert alert-info">
+                <div class="alert alert-info info-panel">
                     <strong>Mode:</strong> {{ comparison_result.mode }}<br>
                     <strong>Source:</strong> {{ comparison_result.source_dir }}<br>
                     <strong>Destination:</strong> {{ comparison_result.dest_dir }}
                 </div>
 
                 <div class="mb-3">
-                    <h6>Fichiers à créer ({{ comparison_result.nombre_to_create }}):</h6>
-                    <div class="file-list">
-                        <ul class="list-group">
-                            {% for file in comparison_result.to_create %}
-                            <li class="list-group-item">
-                                <i class="bi bi-plus-circle text-success"></i> {{ file }}
-                            </li>
-                            {% endfor %}
-                        </ul>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h6>
+                            <span class="collapse-toggle" onclick="toggleSection('create-files')">
+                                <i class="bi bi-plus-circle"></i> Fichiers à créer
+                                <span class="badge bg-success badge-count">{{ comparison_result.nombre_to_create }}</span>
+                            </span>
+                        </h6>
+                        <div>
+                            <button class="btn btn-sm btn-outline-secondary me-1"
+                                    onclick="toggleAllFolders('create-files', true, event)">
+                                <i class="bi bi-folder-plus"></i> Tout développer
+                            </button>
+                            <button class="btn btn-sm btn-outline-secondary"
+                                    onclick="toggleAllFolders('create-files', false, event)">
+                                <i class="bi bi-folder-minus"></i> Tout réduire
+                            </button>
+                        </div>
+                    </div>
+                    <div class="file-list" id="create-files">
+                        {% if comparison_result.to_create %}
+                            <div class="list-group">
+                                {% set ns = namespace(current_path='', depth=0) %}
+                                {% for file in comparison_result.to_create | sort %}
+                                    {% set file_path = file %}
+                                    {% if file_path.startswith('+++') %}
+                                        {% set file_path = file_path[3:] | trim %}
+                                    {% endif %}
+
+                                    {% set path_parts = file_path.split('/') %}
+                                    {% set folder_parts = path_parts[:-1] %}
+                                    {% set filename = path_parts[-1] %}
+
+                                    {% if folder_parts %}
+                                        {# Générer le chemin du dossier actuel #}
+                                        {% set folder_path = '/'.join(folder_parts) %}
+                                        {% set common_parts = [] %}
+                                        {% set loop_done = false %}
+                                        {% set max_parts = (ns.current_path.count('/') + 1) if (ns.current_path.count('/') + 1 < folder_path.count('/') + 1) else (folder_path.count('/') + 1) %}
+                                        {% for i in range(max_parts) %}
+                                            {% if not loop_done %}
+                                                {% set current_part = ns.current_path.split('/')[i] if i < ns.current_path.count('/') + 1 else '' %}
+                                                {% set new_part = folder_path.split('/')[i] if i < folder_path.count('/') + 1 else '' %}
+                                                {% if current_part == new_part and current_part %}
+                                                    {% set _ = common_parts.append(current_part) %}
+                                                {% else %}
+                                                    {% set loop_done = true %}
+                                                {% endif %}
+                                            {% endif %}
+                                        {% endfor %}
+                                        {% set common_prefix = '/'.join(common_parts) %}
+
+                                        {# Fermer les dossiers qui ne sont plus dans le chemin #}
+                                        {% set close_count = ns.current_path.count('/') + 1 - (common_prefix.count('/') + 1 if common_prefix else 0) %}
+                                        {% for _ in range(close_count) %}
+                                            </div></div>
+                                            {% set ns.depth = ns.depth - 1 %}
+                                        {% endfor %}
+
+                                        {# Ouvrir les nouveaux dossiers #}
+                                        {% set new_folders = folder_path.split('/')[common_prefix.count('/') + 1 if common_prefix else 0:] %}
+                                        {% for folder in new_folders %}
+                                            {% set folder_id = 'create-' + (common_prefix + '/' + '/'.join(new_folders[:loop.index]) if common_prefix else '/'.join(new_folders[:loop.index])) | replace('/', '-') %}
+                                            <div class="folder-container">
+                                                <div class="folder-item" onclick="toggleFolder('{{ folder_id }}')">
+                                                    <i class="bi bi-folder-fill folder-icon"></i> {{ folder }}/
+                                                </div>
+                                                <div id="{{ folder_id }}" class="folder-content">
+                                                {% set ns.depth = ns.depth + 1 %}
+                                        {% endfor %}
+
+                                        {% set ns.current_path = folder_path %}
+                                    {% elif ns.current_path %}
+                                        {# Fermer les dossiers précédents si on revient à la racine #}
+                                        {% for _ in range(ns.depth) %}
+                                            </div></div>
+                                        {% endfor %}
+                                        {% set ns.current_path = '' %}
+                                        {% set ns.depth = 0 %}
+                                    {% endif %}
+
+                                    {# Afficher le fichier #}
+                                    <div class="file-item">
+                                        <i class="bi bi-plus-circle"></i>
+                                        <span class="file-name">{{ filename }}</span>
+                                    </div>
+                                {% endfor %}
+
+                                {# Fermer les dossiers restants à la fin #}
+                                {% for _ in range(ns.depth) %}
+                                    </div></div>
+                                {% endfor %}
+                            </div>
+                        {% else %}
+                            <div class="alert alert-info">Aucun fichier à créer</div>
+                        {% endif %}
                     </div>
                 </div>
 
                 <div class="mb-3">
-                    <h6>Fichiers à mettre à jour ({{ comparison_result.nombre_to_update }}):</h6>
-                    <div class="file-list">
-                        <ul class="list-group">
-                            {% for file in comparison_result.to_update %}
-                            <li class="list-group-item">
-                                <i class="bi bi-arrow-clockwise text-warning"></i> {{ file }}
-                            </li>
-                            {% endfor %}
-                        </ul>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h6>
+                            <span class="collapse-toggle" onclick="toggleSection('update-files')">
+                                <i class="bi bi-arrow-clockwise"></i> Fichiers à mettre à jour
+                                <span class="badge bg-warning badge-count">{{ comparison_result.nombre_to_update }}</span>
+                            </span>
+                        </h6>
+                        <div>
+                            <button class="btn btn-sm btn-outline-secondary me-1"
+                                    onclick="toggleAllFolders('update-files', true, event)">
+                                <i class="bi bi-folder-plus"></i> Tout développer
+                            </button>
+                            <button class="btn btn-sm btn-outline-secondary"
+                                    onclick="toggleAllFolders('update-files', false, event)">
+                                <i class="bi bi-folder-minus"></i> Tout réduire
+                            </button>
+                        </div>
+                    </div>
+                    <div class="file-list" id="update-files">
+                        {% if comparison_result.to_update %}
+                            <div class="list-group">
+                                {% set ns = namespace(current_path='', depth=0) %}
+                                {% for file in comparison_result.to_update | sort %}
+                                    {% set file_path = file %}
+                                    {% if file_path.startswith('+++') %}
+                                        {% set file_path = file_path[3:] | trim %}
+                                    {% endif %}
+
+                                    {% set path_parts = file_path.split('/') %}
+                                    {% set folder_parts = path_parts[:-1] %}
+                                    {% set filename = path_parts[-1] %}
+
+                                    {% if folder_parts %}
+                                        {# Générer le chemin du dossier actuel #}
+                                        {% set folder_path = '/'.join(folder_parts) %}
+                                        {% set common_parts = [] %}
+                                        {% set loop_done = false %}
+                                        {% set max_parts = (ns.current_path.count('/') + 1) if (ns.current_path.count('/') + 1 < folder_path.count('/') + 1) else (folder_path.count('/') + 1) %}
+                                        {% for i in range(max_parts) %}
+                                            {% if not loop_done %}
+                                                {% set current_part = ns.current_path.split('/')[i] if i < ns.current_path.count('/') + 1 else '' %}
+                                                {% set new_part = folder_path.split('/')[i] if i < folder_path.count('/') + 1 else '' %}
+                                                {% if current_part == new_part and current_part %}
+                                                    {% set _ = common_parts.append(current_part) %}
+                                                {% else %}
+                                                    {% set loop_done = true %}
+                                                {% endif %}
+                                            {% endif %}
+                                        {% endfor %}
+                                        {% set common_prefix = '/'.join(common_parts) %}
+
+                                        {# Fermer les dossiers qui ne sont plus dans le chemin #}
+                                        {% set close_count = ns.current_path.count('/') + 1 - (common_prefix.count('/') + 1 if common_prefix else 0) %}
+                                        {% for _ in range(close_count) %}
+                                            </div></div>
+                                            {% set ns.depth = ns.depth - 1 %}
+                                        {% endfor %}
+
+                                        {# Ouvrir les nouveaux dossiers #}
+                                        {% set new_folders = folder_path.split('/')[common_prefix.count('/') + 1 if common_prefix else 0:] %}
+                                        {% for folder in new_folders %}
+                                            {% set folder_id = 'update-' + (common_prefix + '/' + '/'.join(new_folders[:loop.index]) if common_prefix else '/'.join(new_folders[:loop.index])) | replace('/', '-') %}
+                                            <div class="folder-container">
+                                                <div class="folder-item" onclick="toggleFolder('{{ folder_id }}')">
+                                                    <i class="bi bi-folder-fill folder-icon"></i> {{ folder }}/
+                                                </div>
+                                                <div id="{{ folder_id }}" class="folder-content">
+                                                {% set ns.depth = ns.depth + 1 %}
+                                        {% endfor %}
+
+                                        {% set ns.current_path = folder_path %}
+                                    {% elif ns.current_path %}
+                                        {# Fermer les dossiers précédents si on revient à la racine #}
+                                        {% for _ in range(ns.depth) %}
+                                            </div></div>
+                                        {% endfor %}
+                                        {% set ns.current_path = '' %}
+                                        {% set ns.depth = 0 %}
+                                    {% endif %}
+
+                                    {# Afficher le fichier #}
+                                    <div class="file-item">
+                                        <i class="bi bi-arrow-clockwise"></i>
+                                        <span class="file-name">{{ filename }}</span>
+                                    </div>
+                                {% endfor %}
+
+                                {# Fermer les dossiers restants à la fin #}
+                                {% for _ in range(ns.depth) %}
+                                    </div></div>
+                                {% endfor %}
+                            </div>
+                        {% else %}
+                            <div class="alert alert-info">Aucun fichier à mettre à jour</div>
+                        {% endif %}
                     </div>
                 </div>
 
                 {% if comparison_result.mode != 'A idem B' %}
                 <div class="mb-3">
-                    <h6>Fichiers à supprimer ({{ comparison_result.nombre_to_delete }}):</h6>
-                    <div class="file-list">
-                        <ul class="list-group">
-                            {% for file in comparison_result.to_delete %}
-                            <li class="list-group-item">
-                                <i class="bi bi-trash text-danger"></i> {{ file }}
-                            </li>
-                            {% endfor %}
-                        </ul>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h6>
+                            <span class="collapse-toggle" onclick="toggleSection('delete-files')">
+                                <i class="bi bi-trash"></i> Fichiers à supprimer
+                                <span class="badge bg-danger badge-count">{{ comparison_result.nombre_to_delete }}</span>
+                            </span>
+                        </h6>
+                        <div>
+                            <button class="btn btn-sm btn-outline-secondary me-1"
+                                    onclick="toggleAllFolders('delete-files', true, event)">
+                                <i class="bi bi-folder-plus"></i> Tout développer
+                            </button>
+                            <button class="btn btn-sm btn-outline-secondary"
+                                    onclick="toggleAllFolders('delete-files', false, event)">
+                                <i class="bi bi-folder-minus"></i> Tout réduire
+                            </button>
+                        </div>
+                    </div>
+                    <div class="file-list" id="delete-files">
+                        {% if comparison_result.to_delete %}
+                            <div class="list-group">
+                                {% set ns = namespace(current_path='', depth=0) %}
+                                {% for file in comparison_result.to_delete | sort %}
+                                    {% set file_path = file %}
+                                    {% if file_path.startswith('---') %}
+                                        {% set file_path = file_path[3:] | trim %}
+                                    {% endif %}
+
+                                    {% set path_parts = file_path.split('/') %}
+                                    {% set folder_parts = path_parts[:-1] %}
+                                    {% set filename = path_parts[-1] %}
+
+                                    {% if folder_parts %}
+                                        {# Générer le chemin du dossier actuel #}
+                                        {% set folder_path = '/'.join(folder_parts) %}
+                                        {% set common_parts = [] %}
+                                        {% set loop_done = false %}
+                                        {% set max_parts = (ns.current_path.count('/') + 1) if (ns.current_path.count('/') + 1 < folder_path.count('/') + 1) else (folder_path.count('/') + 1) %}
+                                        {% for i in range(max_parts) %}
+                                            {% if not loop_done %}
+                                                {% set current_part = ns.current_path.split('/')[i] if i < ns.current_path.count('/') + 1 else '' %}
+                                                {% set new_part = folder_path.split('/')[i] if i < folder_path.count('/') + 1 else '' %}
+                                                {% if current_part == new_part and current_part %}
+                                                    {% set _ = common_parts.append(current_part) %}
+                                                {% else %}
+                                                    {% set loop_done = true %}
+                                                {% endif %}
+                                            {% endif %}
+                                        {% endfor %}
+                                        {% set common_prefix = '/'.join(common_parts) %}
+
+                                        {# Fermer les dossiers qui ne sont plus dans le chemin #}
+                                        {% set close_count = ns.current_path.count('/') + 1 - (common_prefix.count('/') + 1 if common_prefix else 0) %}
+                                        {% for _ in range(close_count) %}
+                                            </div></div>
+                                            {% set ns.depth = ns.depth - 1 %}
+                                        {% endfor %}
+
+                                        {# Ouvrir les nouveaux dossiers #}
+                                        {% set new_folders = folder_path.split('/')[common_prefix.count('/') + 1 if common_prefix else 0:] %}
+                                        {% for folder in new_folders %}
+                                            {% set folder_id = 'delete-' + (common_prefix + '/' + '/'.join(new_folders[:loop.index]) if common_prefix else '/'.join(new_folders[:loop.index])) | replace('/', '-') %}
+                                            <div class="folder-container">
+                                                <div class="folder-item" onclick="toggleFolder('{{ folder_id }}')">
+                                                    <i class="bi bi-folder-fill folder-icon"></i> {{ folder }}/
+                                                </div>
+                                                <div id="{{ folder_id }}" class="folder-content">
+                                                {% set ns.depth = ns.depth + 1 %}
+                                        {% endfor %}
+
+                                        {% set ns.current_path = folder_path %}
+                                    {% elif ns.current_path %}
+                                        {# Fermer les dossiers précédents si on revient à la racine #}
+                                        {% for _ in range(ns.depth) %}
+                                            </div></div>
+                                        {% endfor %}
+                                        {% set ns.current_path = '' %}
+                                        {% set ns.depth = 0 %}
+                                    {% endif %}
+
+                                    {# Afficher le fichier #}
+                                    <div class="file-item">
+                                        <i class="bi bi-trash"></i>
+                                        <span class="file-name">{{ filename }}</span>
+                                    </div>
+                                {% endfor %}
+
+                                {# Fermer les dossiers restants à la fin #}
+                                {% for _ in range(ns.depth) %}
+                                    </div></div>
+                                {% endfor %}
+                            </div>
+                        {% else %}
+                            <div class="alert alert-info">Aucun fichier à supprimer</div>
+                        {% endif %}
                     </div>
                 </div>
                 {% endif %}
@@ -173,7 +507,89 @@
                 <h5 class="card-title mb-0">Résultats de la Synchronisation</h5>
             </div>
             <div class="card-body">
-                <pre class="bg-light p-3 rounded"><code>{{ sync_result | tojson(indent=2) }}</code></pre>
+                <div class="alert alert-info">
+                    <strong>Mode:</strong> {{ sync_result.mode }}<br>
+                    <strong>Source:</strong> {{ sync_result.source_dir }}<br>
+                    <strong>Destination:</strong> {{ sync_result.dest_dir }}<br>
+                    <strong>Status:</strong> <span class="badge bg-success">{{ sync_result.status }}</span><br>
+                    <strong>Éléments créés:</strong> {{ sync_result.nombre_to_create }}<br>
+                    <strong>Éléments mis à jour:</strong> {{ sync_result.nombre_to_update }}<br>
+                    <strong>Éléments supprimés:</strong> {{ sync_result.nombre_to_delete }}<br>
+                </div>
+
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h6>
+                            <span class="collapse-toggle" onclick="toggleCollapse('sync-files')">
+                                <i class="bi bi-list"></i> Détails des fichiers traités
+                            </span>
+                        </h6>
+                        <button class="btn btn-sm btn-outline-secondary"
+                                onclick="toggleCode('sync-result-code')">Afficher/Masquer le JSON</button>
+                    </div>
+
+                    <!-- Affichage structuré des résultats de synchronisation -->
+                    <div class="sync-results" id="sync-files">
+                        {% if sync_result.to_create %}
+                        <div class="mt-3">
+                            <h6>
+                                <span class="collapse-toggle" onclick="toggleCollapse('sync-created')">
+                                    <i class="bi bi-plus-circle"></i> Fichiers créés
+                                    <span class="badge bg-success badge-count">{{ sync_result.to_create | length }}</span>
+                                </span>
+                            </h6>
+                            <div class="collapse show" id="sync-created">
+                                <ul class="list-group">
+                                    {% for file in sync_result.to_create | sort %}
+                                    <li class="list-group-item">{{ file }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        {% if sync_result.to_update %}
+                        <div class="mt-3">
+                            <h6>
+                                <span class="collapse-toggle" onclick="toggleCollapse('sync-updated')">
+                                    <i class="bi bi-arrow-clockwise"></i> Fichiers mis à jour
+                                    <span class="badge bg-warning badge-count">{{ sync_result.to_update | length }}</span>
+                                </span>
+                            </h6>
+                            <div class="collapse show" id="sync-updated">
+                                <ul class="list-group">
+                                    {% for file in sync_result.to_update | sort %}
+                                    <li class="list-group-item">{{ file }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        {% if sync_result.to_delete %}
+                        <div class="mt-3">
+                            <h6>
+                                <span class="collapse-toggle" onclick="toggleCollapse('sync-deleted')">
+                                    <i class="bi bi-trash"></i> Fichiers supprimés
+                                    <span class="badge bg-danger badge-count">{{ sync_result.to_delete | length }}</span>
+                                </span>
+                            </h6>
+                            <div class="collapse show" id="sync-deleted">
+                                <ul class="list-group">
+                                    {% for file in sync_result.to_delete | sort %}
+                                    <li class="list-group-item">{{ file }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <!-- Code JSON brut -->
+                    <div id="sync-result-code" class="mt-3" style="display: none;">
+                        <pre class="bg-light p-3 rounded"><code>{{ sync_result | tojson(indent=2) }}</code></pre>
+                    </div>
+                </div>
             </div>
         </div>
         {% endif %}
@@ -183,6 +599,7 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css">
 
     <script>
+        // Gestion du formulaire
         function validateForm() {
             const sourceDir = document.getElementById('source_dir');
             const destDir = document.getElementById('dest_dir');
@@ -247,10 +664,133 @@
         setTimeout(function() {
             const alerts = document.getElementsByClassName('alert');
             for(let alert of alerts) {
-                const closeButton = alert.querySelector('.btn-close');
-                if(closeButton) closeButton.click();
+                if (!alert.classList.contains('alert-info')) {
+                    const closeButton = alert.querySelector('.btn-close');
+                    if (closeButton) {
+                        closeButton.click();
+                    }
+                }
             }
         }, 5000);
+
+        // Fonctions pour la gestion des dossiers dans l'affichage
+        function toggleFolder(folderId) {
+            console.log(`Toggle folder: ${folderId}`);
+            const folderContent = document.getElementById(folderId);
+            if (folderContent) {
+                // Vérifier l'état actuel et l'inverser
+                const isVisible = folderContent.style.display === 'block';
+                folderContent.style.display = isVisible ? 'none' : 'block';
+            } else {
+                console.error(`Folder content with ID ${folderId} not found`);
+            }
+        }
+
+        // Toggle d'une section entière (création, mise à jour, suppression)
+        function toggleSection(sectionId) {
+            console.log(`Toggle section: ${sectionId}`);
+            const section = document.getElementById(sectionId);
+            if (section) {
+                if (section.style.display === 'none') {
+                    section.style.display = 'block';
+                } else {
+                    section.style.display = 'none';
+                }
+            }
+        }
+
+        // Toggle collapse pour Bootstrap
+        function toggleCollapse(elementId) {
+            console.log(`Toggle collapse: ${elementId}`);
+            const element = document.getElementById(elementId);
+            if (element) {
+                if (element.classList.contains('show')) {
+                    element.classList.remove('show');
+                } else {
+                    element.classList.add('show');
+                }
+            }
+        }
+
+        // Toggle code JSON
+        function toggleCode(elementId) {
+            console.log(`Toggle code: ${elementId}`);
+            const element = document.getElementById(elementId);
+            if (element) {
+                if (element.style.display === 'none') {
+                    element.style.display = 'block';
+                } else {
+                    element.style.display = 'none';
+                }
+            }
+        }
+
+        // Développer/réduire tous les dossiers d'une section
+        function toggleAllFolders(sectionId, expand, event) {
+            console.log(`Toggle all folders in section ${sectionId} to ${expand ? 'expanded' : 'collapsed'}`);
+
+            // Récupération de tous les éléments .folder-content dans la section spécifiée
+            const section = document.getElementById(sectionId);
+            if (!section) {
+                console.error(`Section with ID ${sectionId} not found`);
+                return;
+            }
+
+            // Utiliser une méthode alternative pour sélectionner les éléments
+            const prefix = sectionId.replace('-files', '');
+            let folderCount = 0;
+
+            // On utilise un délai pour s'assurer que le DOM est stable
+            setTimeout(() => {
+                // Approche 1: Utiliser querySelector dans le document entier
+                document.querySelectorAll('.folder-content').forEach(element => {
+                    if (element.id && element.id.startsWith(prefix)) {
+                        folderCount++;
+                        console.log(`Setting ${element.id} to display: ${expand ? 'block' : 'none'}`);
+                        element.style.display = expand ? 'block' : 'none';
+                    }
+                });
+
+                console.log(`Applied toggle to ${folderCount} folder elements`);
+
+                // Pour un retour visuel que l'action a été effectuée
+                const button = event ? event.target.closest('button') : null;
+                if (button) {
+                    const originalText = button.innerHTML;
+                    button.innerHTML = expand ? '<i class="bi bi-check"></i> Développé' : '<i class="bi bi-check"></i> Réduit';
+                    setTimeout(() => {
+                        button.innerHTML = originalText;
+                    }, 1000);
+                }
+            }, 0);
+        }
+
+        // Initialiser l'affichage des dossiers et ajouter l'initialisation des boutons
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM content loaded, initializing folders');
+
+            // Réduire tous les dossiers au chargement
+            const sections = ['create-files', 'update-files', 'delete-files'];
+            sections.forEach(function(section) {
+                const sectionElement = document.getElementById(section);
+                if (sectionElement) {
+                    console.log(`Initializing section: ${section}`);
+                    const folderContents = sectionElement.querySelectorAll('.folder-content');
+                    folderContents.forEach(function(element) {
+                        element.style.display = 'none';
+                    });
+                } else {
+                    console.warn(`Section ${section} not found`);
+                }
+            });
+
+            // Initialiser l'aide pour le mode
+            const modeSelect = document.getElementById('mode');
+            if (modeSelect) {
+                const event = new Event('change');
+                modeSelect.dispatchEvent(event);
+            }
+        });
     </script>
 </body>
 </html>
