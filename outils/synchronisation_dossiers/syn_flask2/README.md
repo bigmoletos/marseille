@@ -120,14 +120,41 @@ docker logs sync-folders-app
 
 ## Documentation
 
-La documentation complète générée à partir des docstrings du code est disponible dans le dossier `docs/`. Pour générer ou mettre à jour cette documentation, exécutez :
+La documentation complète du projet est disponible dans le dossier `docs/`. Cette documentation est générée automatiquement à partir des docstrings présents dans le code source.
+
+### Génération de la documentation
+
+Pour générer ou mettre à jour la documentation, exécutez simplement :
 
 ```bash
-# Installation de pydoc-markdown (si nécessaire)
-pip install pydoc-markdown
+# Génération de la documentation à partir des docstrings
+python generate_docs.py
+```
 
-# Génération de la documentation
-pydoc-markdown -I . -m app -m syn_folders_to_container --render-toc > docs/documentation.md
+Le script `generate_docs.py` analyse les modules Python du projet et génère des fichiers Markdown structurés dans le dossier `docs/`. Aucune dépendance externe n'est nécessaire.
+
+### Structure de la documentation
+
+La documentation générée comprend :
+
+- Un fichier `index.md` qui sert de point d'entrée
+- Des fichiers de documentation spécifiques pour chaque module (`module_app.md`, `module_syn_folders_to_container.md`, etc.)
+- Des guides d'utilisation supplémentaires (`interface_web.md`, `docker_guide.md`, etc.)
+
+### Consultation de la documentation
+
+Pour consulter la documentation :
+
+1. Accédez au dossier `docs/`
+2. Ouvrez les fichiers Markdown avec n'importe quel éditeur compatible ou visualiseur Markdown
+3. Pour une meilleure expérience, vous pouvez convertir les fichiers Markdown en HTML avec des outils comme `grip` ou `mkdocs`
+
+```bash
+# Installation de grip (facultatif)
+pip install grip
+
+# Visualisation de la documentation avec grip
+grip docs/index.md
 ```
 
 ## Développement
@@ -137,3 +164,22 @@ Pour développer localement sans Docker, suivez ces étapes :
 1. Créez un environnement virtuel Python
 2. Installez les dépendances : `pip install -r requirements.txt`
 3. Exécutez l'application : `python app.py`
+
+### Tests et documentation
+
+Pour faciliter le développement, vous pouvez utiliser les scripts suivants :
+
+- `run_tests.py` : Exécute tous les tests unitaires
+- `generate_docs.py` : Génère la documentation à partir des docstrings
+- `build_docs_and_run_tests.py` : Script combiné qui exécute à la fois les tests et génère la documentation
+
+```bash
+# Pour exécuter les tests et générer la documentation en une seule commande
+python build_docs_and_run_tests.py
+```
+
+Ce script combiné offre les avantages suivants :
+- Vérification automatique de la présence des scripts nécessaires
+- Exécution séquentielle des tests puis de la génération de documentation
+- Bilan détaillé des opérations réussies et échouées
+- Code de retour adapté (0 pour succès, 1 pour échec) pour l'intégration dans des pipelines CI/CD
