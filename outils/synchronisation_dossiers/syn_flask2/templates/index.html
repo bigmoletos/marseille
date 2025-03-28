@@ -38,24 +38,24 @@
             <div class="card-body">
                 <form id="syncForm" action="/compare_folders" method="post" onsubmit="return validateForm()">
                     <div class="mb-3">
-                        <label for="source_dir" class="form-label">Dossier Source</label>
+                        <label for="source" class="form-label">Dossier Source</label>
                         <div class="input-group">
-                            <input type="text" class="form-control" id="source_dir" name="source_dir" required
-                                   value="{{ source_dir if source_dir else '' }}"
-                                   placeholder="Exemple: S:/sauve_dossier2">
-                            <button class="btn btn-outline-secondary" type="button" onclick="browsePath('source_dir')">Parcourir</button>
+                            <input type="text" class="form-control" id="source" name="source" required
+                                   value="{{ source if source else '' }}"
+                                   placeholder="Exemple: C:/Documents/source">
+                            <button class="btn btn-outline-secondary" type="button" onclick="browsePath('source')">Parcourir</button>
                         </div>
-                        <div class="invalid-feedback" id="source_dir_feedback"></div>
+                        <div class="invalid-feedback" id="source_feedback"></div>
                     </div>
                     <div class="mb-3">
-                        <label for="dest_dir" class="form-label">Dossier Destination</label>
+                        <label for="target" class="form-label">Dossier Destination</label>
                         <div class="input-group">
-                            <input type="text" class="form-control" id="dest_dir" name="dest_dir" required
-                                   value="{{ dest_dir if dest_dir else '' }}"
-                                   placeholder="Exemple: S:/sauve_dossier3">
-                            <button class="btn btn-outline-secondary" type="button" onclick="browsePath('dest_dir')">Parcourir</button>
+                            <input type="text" class="form-control" id="target" name="target" required
+                                   value="{{ target if target else '' }}"
+                                   placeholder="Exemple: D:/Backup/destination">
+                            <button class="btn btn-outline-secondary" type="button" onclick="browsePath('target')">Parcourir</button>
                         </div>
-                        <div class="invalid-feedback" id="dest_dir_feedback"></div>
+                        <div class="invalid-feedback" id="target_feedback"></div>
                     </div>
                     <div class="mb-3">
                         <label for="mode" class="form-label">Mode de Synchronisation</label>
@@ -79,8 +79,8 @@
             <div class="card-body">
                 <div class="alert alert-info info-panel">
                     <strong>Mode:</strong> {{ comparison_result.mode }}<br>
-                    <strong>Source:</strong> {{ comparison_result.source_dir }}<br>
-                    <strong>Destination:</strong> {{ comparison_result.dest_dir }}
+                    <strong>Source:</strong> {{ comparison_result.source }}<br>
+                    <strong>Destination:</strong> {{ comparison_result.target }}
                 </div>
 
                 <div class="mb-3">
@@ -383,8 +383,8 @@
                 {% endif %}
 
                 <form action="/sync_folders" method="post" onsubmit="showLoading()">
-                    <input type="hidden" name="source_dir" value="{{ comparison_result.source_dir }}">
-                    <input type="hidden" name="dest_dir" value="{{ comparison_result.dest_dir }}">
+                    <input type="hidden" name="source" value="{{ comparison_result.source }}">
+                    <input type="hidden" name="target" value="{{ comparison_result.target }}">
                     <input type="hidden" name="mode" value="{{ comparison_result.mode }}">
                     <button type="submit" class="btn btn-success">
                         <i class="bi bi-play-circle"></i> Lancer la Synchronisation
@@ -402,8 +402,8 @@
             <div class="card-body">
                 <div class="alert alert-info">
                     <strong>Mode:</strong> {{ sync_result.mode }}<br>
-                    <strong>Source:</strong> {{ sync_result.source_dir }}<br>
-                    <strong>Destination:</strong> {{ sync_result.dest_dir }}<br>
+                    <strong>Source:</strong> {{ sync_result.source }}<br>
+                    <strong>Destination:</strong> {{ sync_result.target }}<br>
                     <strong>Status:</strong> <span class="badge bg-success">{{ sync_result.status }}</span><br>
                     <strong>Éléments créés:</strong> {{ sync_result.nombre_to_create }}<br>
                     <strong>Éléments mis à jour:</strong> {{ sync_result.nombre_to_update }}<br>
@@ -504,37 +504,34 @@
     <script>
         // Gestion du formulaire
         function validateForm() {
-            const sourceDir = document.getElementById('source_dir');
-            const destDir = document.getElementById('dest_dir');
-            const sourceFeedback = document.getElementById('source_dir_feedback');
-            const destFeedback = document.getElementById('dest_dir_feedback');
             let isValid = true;
 
-            // Validation du dossier source
-            if (!sourceDir.value) {
-                sourceFeedback.textContent = 'Le dossier source est requis';
-                sourceDir.classList.add('is-invalid');
+            // Valider le dossier source
+            const sourceInput = document.getElementById('source');
+            const sourceFeedback = document.getElementById('source_feedback');
+            if (!sourceInput.value.trim()) {
+                sourceInput.classList.add('is-invalid');
+                sourceFeedback.textContent = 'Veuillez spécifier un dossier source.';
                 isValid = false;
             } else {
-                sourceDir.classList.remove('is-invalid');
+                sourceInput.classList.remove('is-invalid');
             }
 
-            // Validation du dossier destination
-            if (!destDir.value) {
-                destFeedback.textContent = 'Le dossier destination est requis';
-                destDir.classList.add('is-invalid');
-                isValid = false;
-            } else if (destDir.value === sourceDir.value) {
-                destFeedback.textContent = 'Les dossiers source et destination doivent être différents';
-                destDir.classList.add('is-invalid');
+            // Valider le dossier destination
+            const targetInput = document.getElementById('target');
+            const targetFeedback = document.getElementById('target_feedback');
+            if (!targetInput.value.trim()) {
+                targetInput.classList.add('is-invalid');
+                targetFeedback.textContent = 'Veuillez spécifier un dossier destination.';
                 isValid = false;
             } else {
-                destDir.classList.remove('is-invalid');
+                targetInput.classList.remove('is-invalid');
             }
 
             if (isValid) {
                 showLoading();
             }
+
             return isValid;
         }
 
@@ -559,8 +556,9 @@
         });
 
         // Simulation du bouton Parcourir (à adapter selon les besoins)
-        function browsePath(inputId) {
-            alert('Fonctionnalité de parcours des dossiers non implémentée.\nVeuillez saisir le chemin manuellement.');
+        function browsePath(fieldId) {
+            // Simulation de dialogue de sélection de dossier (en réalité, ceci serait géré par le backend)
+            alert("Cette fonctionnalité n'est pas disponible dans cette version. Veuillez saisir manuellement le chemin du dossier.");
         }
 
         // Auto-hide des alertes après 5 secondes

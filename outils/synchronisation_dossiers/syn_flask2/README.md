@@ -183,3 +183,27 @@ Ce script combiné offre les avantages suivants :
 - Exécution séquentielle des tests puis de la génération de documentation
 - Bilan détaillé des opérations réussies et échouées
 - Code de retour adapté (0 pour succès, 1 pour échec) pour l'intégration dans des pipelines CI/CD
+
+## Utilisation avec Docker
+
+### Configuration avec des volumes nommés
+
+Pour faciliter l'utilisation de l'application avec n'importe quels dossiers Windows, la configuration a été modifiée pour utiliser des volumes Docker nommés plutôt que des montages directs. Cela offre plusieurs avantages :
+
+1. Flexibilité pour utiliser n'importe quels dossiers sur n'importe quels lecteurs
+2. Meilleure compatibilité avec les chemins Windows complexes (espaces, caractères spéciaux, etc.)
+3. Simplicité d'utilisation via l'interface graphique
+
+### Importation de fichiers dans les volumes
+
+Pour importer des fichiers dans les volumes Docker, utilisez le script `copy_to_volumes.bat` :
+
+1. Exécutez le script et choisissez l'option pour copier des fichiers vers le volume source ou destination
+2. Sélectionnez le dossier à copier dans la boîte de dialogue
+3. Les fichiers seront copiés dans le volume correspondant
+
+Vous pouvez également créer des fichiers de test pour vérifier le bon fonctionnement de l'application.
+
+### Vérification des montages
+
+Le script `test_montages.ps1` vous permet de vérifier si Docker peut accéder correctement aux dossiers Windows spécifiés dans le fichier `.env`. Utilisez ce script pour diagnostiquer d'éventuels problèmes de montage.

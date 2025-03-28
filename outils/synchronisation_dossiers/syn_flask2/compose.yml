@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ${DOCKERHUB_USERNAME:-bigmoletos}/sync-folders:latest
+    image: sync-folders:latest
     container_name: sync-folders-app
     restart: unless-stopped
     ports:
@@ -12,21 +12,14 @@ services:
       - FLASK_APP=app
       - FLASK_ENV=${FLASK_ENV:-production}
       - PYTHONUNBUFFERED=1
-      # Variables spécifiques pour la synchronisation
+      # Mode conteneur pour la synchronisation
       - SYNC_MODE=container
-      - DOCKER_SAUVE_SOURCE=/sync/source
-      - DOCKER_SAUVE_DEST=/sync/dest
     volumes:
       # Volumes pour les dossiers de l'application
       - ./data:/app/data
       - ./logs:/app/logs
-      # Volumes pour les dossiers à synchroniser
-      # Remplacer par les chemins réels vers vos dossiers Windows
-      # IMPORTANT: Remplacez ces chemins par vos dossiers réels à synchroniser
-      - ${SOURCE_DIR:-./source_example}:/sync/source
-      - ${DEST_DIR:-./dest_example}:/sync/dest
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5000/"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -36,14 +29,4 @@ services:
 networks:
   default:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.28.0.0/16
-
-# Conservation de la définition du volume de données
-volumes:
-  data-volume:
-    name: sync-folders-data
-  # Les volumes nommés sync-source et sync-dest sont supprimés car
-  # nous utilisons maintenant le montage direct des dossiers
 
