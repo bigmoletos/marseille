@@ -273,6 +273,11 @@ Redémarrez les services réseau :
 ```bash
 net stop winnat
 net start winnat
+# en 1 ligne
+net stop winnat ;net start winnat
+
+
+
 ```
 
 # Cheatsheet : Debugging Docker
